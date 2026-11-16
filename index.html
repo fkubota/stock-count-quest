@@ -1,0 +1,1087 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>在庫カウントクエスト</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #0d0f16; color: #cfd4e0;
+    font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic", Meiryo, sans-serif;
+  }
+  #wrap {
+    min-height: 100%;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 12px; padding: 16px;
+  }
+  canvas {
+    width: 100%; max-width: 960px; aspect-ratio: 16 / 9;
+    background: #11131c;
+    border: 2px solid #2a2f40; border-radius: 4px;
+    /* ドット絵は矩形を直接塗って描くのでスムージング設定は不要だが、
+       拡大時にぼけないよう念のため指定しておく */
+    image-rendering: pixelated;
+    outline: none;
+  }
+  #hint {
+    max-width: 960px; width: 100%;
+    margin: 0; font-size: 13px; line-height: 1.7; color: #6f7788;
+  }
+  #hint b { color: #9aa3b6; font-weight: 600; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="g" width="960" height="540" tabindex="0"></canvas>
+  <p id="hint">
+    <b>そうさ</b> ↑↓←→ いどう ／ Z しらべる・けってい ／ X もどる ／ M てもちメモ ／ Enter かくてい<br>
+    画面をクリックしてからキーを押してください。
+  </p>
+</div>
+
+<script>
+"use strict";
+/* =========================================================================
+   在庫カウントクエスト / STOCK COUNT QUEST
+   飲食店の在庫カウントが、なぜめんどくさいのかを体験するゲーム。
+
+   方針:
+   - 外部依存ゼロ。CDNもfetchも外部画像も使わない（file:// でも動く）
+   - 背景とオブジェクトはドット絵（アート座標を3倍して矩形で塗る）
+   - 文字はCanvasに普通のフォントでくっきり描く（ドット絵化して潰さない）
+   ========================================================================= */
+
+/* ---------------------------------------------------------------- 基本 */
+const cv = document.getElementById("g");
+const ctx = cv.getContext("2d");
+
+const S = 3;                 // ドット1個 = 3実ピクセル
+const AW = 320, AH = 180;    // アート座標系
+const W = AW * S, H = AH * S; // 960 x 540
+
+const FONT = '"Hiragino Kaku Gothic ProN","Hiragino Sans","Yu Gothic",Meiryo,sans-serif';
+
+// 業務システムらしく見せるための配色
+const C = {
+  white:  "#ffffff",
+  sumi:   { 50:"#f7f7f7", 100:"#e8e8e8", 200:"#d4d4d4", 300:"#bababa",
+            400:"#a1a1a1", 500:"#868686", 600:"#6f6f6f", 700:"#585858",
+            800:"#414141", 900:"#1b1b1b" },
+  wasabi: { 50:"#f0fcfa", 300:"#82dad0", 500:"#16a595", 600:"#008f76", 700:"#006e5c" },
+  mikan:  { 50:"#fff9f0", 100:"#fff0d6", 300:"#fcc862", 400:"#f5a820", 500:"#e88c00", 700:"#a85800" },
+  tarako: { 50:"#fff4f2", 300:"#f9a49c", 500:"#e84040", 600:"#d02424", 700:"#ae1a1a" },
+  // 厨房のパレット
+  floorA: "#606876", floorB: "#545c6a", floorLn: "#424856",
+  wall:   "#363a4a", wallHi: "#484e60", wallLo: "#262934",
+  steel:  "#aab2be", steelHi: "#ced4de", steelLo: "#7a8290",
+  wood:   "#966c42", woodLo: "#745230",
+  night:  "#181a24", uiBg: "#141620", uiFg: "#ecf0f8",
+};
+
+/* ---- 描画ヘルパ ---- */
+// アート座標の矩形（ドット絵用）
+function pr(x, y, w, h, col) {
+  ctx.fillStyle = col;
+  ctx.fillRect(Math.round(x) * S, Math.round(y) * S, Math.round(w) * S, Math.round(h) * S);
+}
+// 実ピクセルの矩形（UI用）
+function rr(x, y, w, h, col) { ctx.fillStyle = col; ctx.fillRect(x, y, w, h); }
+// 実ピクセルの枠線
+function ro(x, y, w, h, col, t) {
+  t = t || 2; ctx.strokeStyle = col; ctx.lineWidth = t;
+  ctx.strokeRect(x + t / 2, y + t / 2, w - t, h - t);
+}
+// くっきり文字（ここがドット絵化しない要）
+function txt(s, x, y, o) {
+  o = o || {};
+  const size = o.size || 16;
+  ctx.font = (o.bold ? "bold " : "") + size + "px " + FONT;
+  ctx.textAlign = o.align || "left";
+  ctx.textBaseline = o.base || "top";
+  ctx.fillStyle = o.color || C.uiFg;
+  ctx.fillText(s, x, y);
+}
+function tw(s, size, bold) {
+  ctx.font = (bold ? "bold " : "") + (size || 16) + "px " + FONT;
+  return ctx.measureText(s).width;
+}
+// 文字列アートのスプライト
+function stamp(x, y, rows, pal) {
+  for (let j = 0; j < rows.length; j++) {
+    for (let i = 0; i < rows[j].length; i++) {
+      const ch = rows[j][i];
+      if (ch === ".") continue;
+      pr(x + i, y + j, 1, 1, pal[ch]);
+    }
+  }
+}
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+/* ---------------------------------------------------------------- スプライト */
+const CHEF_PAL = { H:"#f8f8fc", S:"#e8ba96", K:"#20202c", M:"#c48670",
+                   C:"#f0f2f8", A:"#5c94d6", B:"#3a3e52", N:"#222430" };
+const CHEF_FRONT = [
+  "...HHHHHH...", "..HHHHHHHH..", ".HHHHHHHHHH.",
+  "..SSSSSSSS..", "..SKSSSSKS..", "..SSSSSSSS..", "...SMMMMS...",
+  "..CCCCCCCC..", ".CCCAAAACCC.", "SCCCAAAACCCS", "SCCCAAAACCCS",
+  ".CCCAAAACCC.", "..CCAAAACC..", "...BB..BB...", "...BB..BB...", "..NNN..NNN..",
+];
+const CHEF_BACK = [
+  "...HHHHHH...", "..HHHHHHHH..", ".HHHHHHHHHH.",
+  "..SSSSSSSS..", "..SSSSSSSS..", "..SSSSSSSS..", "...SSSSSS...",
+  "..CCCCCCCC..", ".CCCCCCCCCC.", "SCCCCCCCCCCS", "SCCCCCCCCCCS",
+  ".CCCCCCCCCC.", "..CCCCCCCC..", "...BB..BB...", "...BB..BB...", "..NNN..NNN..",
+];
+
+/* ---------------------------------------------------------------- セーブ */
+const SAVE_KEY = "stock-count-quest/v1";
+let storageOK = true;
+
+function todayStr(d) {
+  d = d || new Date();
+  const p = n => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+}
+function defaultSave() {
+  return { lastPlayedDate: null, streak: 0, totalCounted: 0, days: [] };
+}
+function probeStorage() {
+  try {
+    localStorage.setItem(SAVE_KEY + "/probe", "1");
+    localStorage.removeItem(SAVE_KEY + "/probe");
+    return true;
+  } catch (e) { return false; }
+}
+function loadSave() {
+  storageOK = probeStorage();
+  if (!storageOK) return defaultSave();
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return defaultSave();
+    const o = JSON.parse(raw);
+    return Object.assign(defaultSave(), o);
+  } catch (e) { return defaultSave(); }
+}
+function writeSave() {
+  if (!storageOK) return;
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(G.save)); }
+  catch (e) { storageOK = false; }
+}
+
+/* ---------------------------------------------------------------- データ */
+// front/back は棚の手前列と奥列の個数。真の在庫 = front + back
+// theo はシステムが持っている理論在庫（わざとズレている。これが物語の起点）
+// delivery は「本日納品予定」。これも足して入力しないと正解にならない
+const INGREDIENTS = [
+  { id:"pork",    name:"ぶたバラ肉", unit:"袋",     color:"#e8a294",
+    front:9, back:4, theo:19, delivery:2, cause:"定期カウント" },
+  { id:"cabbage", name:"キャベツ",   unit:"ケース", color:"#c6dec6",
+    front:5, back:1, theo:6,  delivery:0, cause:"在庫がマイナス" },
+  { id:"tofu",    name:"とうふ",     unit:"パック", color:"#ded3b4",
+    front:7, back:3, theo:4,  delivery:1, cause:"初回カウント" },
+];
+const expectedOf = ing => ing.front + ing.back + ing.delivery;
+
+const MEMORY_RANGE = 260; // これだけ歩くと記憶が完全に曖昧になる（アート座標の距離）
+
+/* ---------------------------------------------------------------- 状態 */
+const G = {
+  scene: "title",
+  save: null,
+  day: null,
+  notifyOn: false,
+  notifiedDate: null,
+  memoOpen: false,
+  t: 0,
+};
+
+function newDay() {
+  return {
+    counts: {},     // id -> {value, stepAt}
+    inputs: {},     // id -> 入力値
+    touched: {},    // id -> 一度でも値を動かしたか
+    confirmed: {},  // id -> 在庫確定したか
+    skips: 0,
+    steps: 0,
+    startedAt: Date.now(),
+  };
+}
+const remaining = () => INGREDIENTS.filter(i => !G.day.confirmed[i.id]).length;
+
+/* ---------------------------------------------------------------- 入力 */
+const held = Object.create(null);
+const EAT = ["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," ","Enter"];
+
+window.addEventListener("keydown", e => {
+  if (EAT.indexOf(e.key) >= 0) e.preventDefault();
+  if (!held[e.key]) onKey(e.key);
+  held[e.key] = true;
+});
+window.addEventListener("keyup", e => { held[e.key] = false; });
+cv.addEventListener("mousedown", () => cv.focus());
+
+const k = name => !!held[name];
+const low = key => (key.length === 1 ? key.toLowerCase() : key);
+
+/* ---------------------------------------------------------------- 厨房 */
+const ROOM = {
+  floorTop: 58, floorBottom: 172,
+  objects: [
+    { id:"fridge", label:"れいぞうこ", x:48,  y:16, w:28, h:42,
+      zone:{ x:44,  y:58, w:36, h:16 } },
+    { id:"pc",     label:"パソコン",   x:232, y:24, w:50, h:34,
+      zone:{ x:230, y:58, w:54, h:16 } },
+  ],
+};
+const player = { x: 152, y: 110, dir: "up" };
+
+function nearObject() {
+  for (const o of ROOM.objects) {
+    const z = o.zone;
+    if (player.x + 5 >= z.x && player.x + 5 <= z.x + z.w &&
+        player.y + 14 >= z.y && player.y + 14 <= z.y + z.h + 10) return o;
+  }
+  return null;
+}
+
+function updateKitchen(dt) {
+  const sp = 52 * dt; // アート座標 / 秒
+  let dx = 0, dy = 0;
+  if (k("ArrowLeft"))  { dx -= sp; player.dir = "left"; }
+  if (k("ArrowRight")) { dx += sp; player.dir = "right"; }
+  if (k("ArrowUp"))    { dy -= sp; player.dir = "up"; }
+  if (k("ArrowDown"))  { dy += sp; player.dir = "down"; }
+  if (dx || dy) {
+    const nx = clamp(player.x + dx, 6, AW - 16);
+    const ny = clamp(player.y + dy, ROOM.floorTop + 4, ROOM.floorBottom - 16);
+    G.day.steps += Math.abs(nx - player.x) + Math.abs(ny - player.y);
+    player.x = nx; player.y = ny;
+  }
+}
+
+/* ---------------------------------------------------------------- カウント */
+function startCount(ing) {
+  const items = [];
+  for (let i = 0; i < ing.front; i++) items.push({ row:0, x: 28 + i * 24, counted:false });
+  for (let i = 0; i < ing.back;  i++) items.push({ row:1, x: 40 + i * 24, counted:false });
+  G.count = { ing, items, cursor: 0, crouch: false };
+  G.scene = "count";
+}
+function countSelectable() {
+  const c = G.count;
+  const idx = [];
+  for (let i = 0; i < c.items.length; i++) {
+    if (c.crouch || c.items[i].row === 0) idx.push(i);
+  }
+  return idx;
+}
+function countTally() { return G.count.items.filter(i => i.counted).length; }
+
+/* ---------------------------------------------------------------- PC */
+function openPC() {
+  for (const ing of INGREDIENTS) {
+    if (G.day.inputs[ing.id] === undefined) G.day.inputs[ing.id] = ing.theo;
+  }
+  G.pc = { row: 0, dialog: null };
+  G.scene = "pc";
+}
+// 入力値が理論在庫から離れすぎていないかを見る。
+// 業務システムによくある「想定と違いますよ」の警告をイメージしている。
+function warnsAt(v, theo) {
+  if (v === 0 && theo > 0) return "在庫数が0になっています";
+  if (v > theo * 1.5 || v < theo / 1.6) return "想定在庫から大きく離れます";
+  return null;
+}
+function confirmRow(ing) {
+  G.day.confirmed[ing.id] = true;
+  if (!G.day.touched[ing.id]) G.day.skips++;   // 未編集での確定＝スキップ
+  if (remaining() === 0) finishDay();
+}
+
+/* ---------------------------------------------------------------- 結果 */
+function finishDay() {
+  let errSum = 0;
+  for (const ing of INGREDIENTS) {
+    const exp = expectedOf(ing);
+    errSum += Math.abs((G.day.inputs[ing.id] || 0) - exp) / exp;
+  }
+  const n = INGREDIENTS.length;
+  const accuracy = Math.max(0, Math.round((1 - errSum / n) * 100));
+  const skipRate = Math.round((G.day.skips / n) * 1000) / 10;
+  const seconds = Math.round((Date.now() - G.day.startedAt) / 1000);
+  const rank = (accuracy >= 90 && G.day.skips === 0) ? "S"
+             : accuracy >= 75 ? "A" : accuracy >= 55 ? "B" : "C";
+
+  G.result = { accuracy, skipRate, seconds, rank, items: n };
+
+  // --- セーブ（前回の記録が残るように） ---
+  const today = todayStr();
+  const prev = G.save.lastPlayedDate;
+  if (prev !== today) {
+    const y = new Date(); y.setDate(y.getDate() - 1);
+    G.save.streak = (prev === todayStr(y)) ? G.save.streak + 1 : 1;
+  }
+  G.save.lastPlayedDate = today;
+  G.save.totalCounted += n;
+  G.save.days.unshift({ date: today, accuracy, skipRate, seconds, rank });
+  G.save.days = G.save.days.slice(0, 30);
+  writeSave();
+
+  G.scene = "result";
+}
+
+/* ---------------------------------------------------------------- 通知 */
+// 静的ページなので「閉じている間」は通知できない。
+// タブを開いている間だけ、日付が変わったら1回だけ催促する。
+function notifySupported() { return typeof Notification !== "undefined"; }
+function toggleNotify() {
+  if (!notifySupported()) return;
+  if (Notification.permission === "granted") { G.notifyOn = !G.notifyOn; return; }
+  Notification.requestPermission().then(p => { G.notifyOn = (p === "granted"); });
+}
+setInterval(() => {
+  if (!G.notifyOn || !notifySupported() || Notification.permission !== "granted") return;
+  const today = todayStr();
+  if (G.save && G.save.lastPlayedDate === today) return; // 今日はもう消化済み
+  if (G.notifiedDate === today) return;                  // 1日1回だけ
+  G.notifiedDate = today;
+  try {
+    new Notification("カウント依頼", {
+      body: "在庫カウントが必要な食材/備品が " + INGREDIENTS.length + " 件あります。",
+    });
+  } catch (e) { /* 通知が出せない環境は黙って諦める */ }
+}, 60 * 1000);
+
+/* =========================================================================
+   キー入力（画面ごと）
+   ========================================================================= */
+function onKey(rawKey) {
+  const key = low(rawKey);
+
+  // メモはどの画面でも開閉できる
+  if (key === "m" && (G.scene === "kitchen" || G.scene === "pc" || G.scene === "fridge")) {
+    G.memoOpen = !G.memoOpen; return;
+  }
+  if (G.memoOpen) { if (key === "x" || key === "Escape") G.memoOpen = false; return; }
+
+  switch (G.scene) {
+    case "title":
+      if (key === "n") { toggleNotify(); return; }
+      if (key === "Enter" || key === "z") { G.scene = "briefing"; }
+      return;
+
+    case "briefing":
+      if (key === "Enter" || key === "z") {
+        G.day = newDay();
+        player.x = 152; player.y = 110;
+        G.scene = "kitchen";
+      }
+      return;
+
+    case "kitchen": {
+      if (key !== "z") return;
+      const o = nearObject();
+      if (!o) return;
+      if (o.id === "fridge") { G.fridge = { cursor: 0 }; G.scene = "fridge"; }
+      if (o.id === "pc") openPC();
+      return;
+    }
+
+    case "fridge": {
+      const f = G.fridge;
+      if (key === "x") { G.scene = "kitchen"; return; }
+      if (key === "ArrowLeft")  f.cursor = (f.cursor + INGREDIENTS.length - 1) % INGREDIENTS.length;
+      if (key === "ArrowRight") f.cursor = (f.cursor + 1) % INGREDIENTS.length;
+      if (key === "z") startCount(INGREDIENTS[f.cursor]);
+      return;
+    }
+
+    case "count": {
+      const c = G.count;
+      const sel = countSelectable();
+      if (key === "x") { G.scene = "fridge"; return; }
+      if (key === "ArrowDown") { // しゃがむ／立つ
+        c.crouch = !c.crouch;
+        c.cursor = clamp(c.cursor, 0, countSelectable().length - 1);
+        return;
+      }
+      if (key === "ArrowLeft")  c.cursor = clamp(c.cursor - 1, 0, sel.length - 1);
+      if (key === "ArrowRight") c.cursor = clamp(c.cursor + 1, 0, sel.length - 1);
+      if (key === "z") {
+        const it = c.items[sel[c.cursor]];
+        if (it) it.counted = true;
+      }
+      if (key === "Enter") {
+        G.day.counts[c.ing.id] = { value: countTally(), stepAt: G.day.steps };
+        G.scene = "fridge";
+      }
+      return;
+    }
+
+    case "pc": {
+      const p = G.pc;
+      if (p.dialog) {
+        const d = p.dialog;
+        if (key === "ArrowLeft")  d.choice = 0;
+        if (key === "ArrowRight") d.choice = 1;
+        if (key === "Enter" || key === "z") {
+          const ing = d.ing;
+          if (d.choice === 0) {
+            // 数えなおす: この食材のカウントを捨てて厨房に戻す（往復のコストが発生する）
+            delete G.day.counts[ing.id];
+            G.day.inputs[ing.id] = ing.theo;
+            G.day.touched[ing.id] = false;
+            p.dialog = null;
+            G.scene = "kitchen";
+          } else {
+            p.dialog = null;
+            confirmRow(ing);
+          }
+        }
+        return;
+      }
+      if (key === "x") { G.scene = "kitchen"; return; }
+      if (key === "ArrowUp")   p.row = (p.row + INGREDIENTS.length - 1) % INGREDIENTS.length;
+      if (key === "ArrowDown") p.row = (p.row + 1) % INGREDIENTS.length;
+      {
+        const ing = INGREDIENTS[p.row];
+        if (G.day.confirmed[ing.id]) {
+          // 確定済みでも再編集はできる（実物と同じ）
+          if (key === "ArrowLeft" || key === "ArrowRight") G.day.confirmed[ing.id] = false;
+        }
+        if (key === "ArrowLeft") {
+          G.day.inputs[ing.id] = Math.max(0, (G.day.inputs[ing.id] || 0) - 1);
+          G.day.touched[ing.id] = true;
+        }
+        if (key === "ArrowRight") {
+          G.day.inputs[ing.id] = (G.day.inputs[ing.id] || 0) + 1;
+          G.day.touched[ing.id] = true;
+        }
+        if ((key === "Enter" || key === "z") && !G.day.confirmed[ing.id]) {
+          const msg = warnsAt(G.day.inputs[ing.id], ing.theo);
+          if (msg) p.dialog = { ing, msg, choice: 0 };
+          else confirmRow(ing);
+        }
+      }
+      return;
+    }
+
+    case "result":
+      if (key === "Enter" || key === "z") G.scene = "title";
+      return;
+  }
+}
+
+/* =========================================================================
+   描画
+   ========================================================================= */
+function drawFloor(y0, y1) {
+  for (let ty = Math.floor(y0 / 16) * 16; ty < y1; ty += 16) {
+    for (let tx = 0; tx < AW; tx += 16) {
+      const c = ((tx / 16 + ty / 16) % 2 === 0) ? C.floorA : C.floorB;
+      const yy = Math.max(ty, y0);
+      pr(tx, yy, 16, Math.min(16, y1 - yy), c);
+    }
+  }
+  for (let ty = Math.ceil(y0 / 16) * 16; ty < y1; ty += 16) pr(0, ty, AW, 1, C.floorLn);
+  for (let tx = 0; tx < AW; tx += 16) pr(tx, y0, 1, y1 - y0, C.floorLn);
+}
+function drawWall(y0, y1) {
+  pr(0, y0, AW, y1 - y0, C.wall);
+  for (let x = 0; x < AW; x += 24) pr(x, y0, 1, y1 - y0 - 3, C.wallLo);
+  pr(0, y1 - 3, AW, 1, C.wallLo);
+  pr(0, y1 - 2, AW, 2, C.wallHi);
+}
+function drawFridge(x, y, w, h) {
+  pr(x, y, w, h, C.steelLo);
+  pr(x + 1, y + 1, w - 2, h - 3, C.steel);
+  pr(x + 2, y + 2, w - 4, 2, C.steelHi);
+  pr(x, y + 15, w, 1, C.steelLo);
+  pr(x + w - 6, y + 5, 2, 7, "#464c5c");
+  pr(x + w - 6, y + 20, 2, 14, "#464c5c");
+  pr(x, y + h - 2, w, 2, "#282c3a");
+}
+function drawDesk(x, y, w, h) {
+  pr(x, y + h - 12, w, 4, C.wood);
+  pr(x + 2, y + h - 8, 3, 8, C.woodLo);
+  pr(x + w - 5, y + h - 8, 3, 8, C.woodLo);
+  pr(x + 10, y, w - 20, h - 12, "#383c4c");
+  pr(x + 12, y + 2, w - 24, h - 17, "#12605c");
+  for (let i = 0; i < 3; i++) pr(x + 15, y + 5 + i * 4, 16 - i * 3, 2, C.wasabi[300]);
+}
+function drawPlayer() {
+  const art = (player.dir === "up") ? CHEF_BACK : CHEF_FRONT;
+  pr(player.x - 1, player.y + 15, 12, 2, "rgba(0,0,0,0.35)");
+  stamp(Math.round(player.x), Math.round(player.y), art, CHEF_PAL);
+}
+
+/* ---- 共通UI ---- */
+function drawHUD() {
+  rr(0, 0, W, 34, "#0e1018");
+  rr(0, 34, W, 2, "#000");
+  txt("のこり", 14, 9, { size: 15, color: C.sumi[400] });
+  txt(String(remaining()), 68, 5, { size: 20, color: C.mikan[300], bold: true });
+  txt("件", 92, 9, { size: 15, color: C.sumi[400] });
+
+  const sec = Math.floor((Date.now() - G.day.startedAt) / 1000);
+  const mm = String(Math.floor(sec / 60)).padStart(2, "0");
+  const ss = String(sec % 60).padStart(2, "0");
+  txt("じかん", 140, 9, { size: 15, color: C.sumi[400] });
+  txt(mm + ":" + ss, 196, 7, { size: 17, color: C.white, bold: true });
+
+  // 記憶ゲージ（直近に数えた分の鮮明さ）
+  txt("きおく", 300, 9, { size: 15, color: C.sumi[400] });
+  const cl = overallClarity();
+  rr(356, 12, 150, 10, "#2a2f3e");
+  rr(356, 12, Math.round(150 * cl), 10,
+     cl > 0.5 ? C.wasabi[500] : cl > 0.25 ? C.mikan[400] : C.tarako[500]);
+  ro(356, 12, 150, 10, "#0c0e14", 2);
+
+  txt("M: てもちメモ", W - 14, 9, { size: 14, color: C.sumi[500], align: "right" });
+}
+function clarityOf(id) {
+  const c = G.day.counts[id];
+  if (!c) return 0;
+  return clamp(1 - (G.day.steps - c.stepAt) / MEMORY_RANGE, 0, 1);
+}
+function overallClarity() {
+  const ids = Object.keys(G.day.counts);
+  if (!ids.length) return 1;
+  return ids.reduce((a, id) => a + clarityOf(id), 0) / ids.length;
+}
+function drawPrompt(text, cx, cy) {
+  const w = tw(text, 15, true) + 24;
+  rr(cx - w / 2, cy, w, 28, "#0c0e16");
+  ro(cx - w / 2, cy, w, 28, C.mikan[300], 2);
+  txt(text, cx, cy + 6, { size: 15, color: C.mikan[300], bold: true, align: "center" });
+}
+function drawMessageBox(lines, accent) {
+  const h = 30 + lines.length * 26;
+  const y = H - h - 46; // 下のキーヒントと重ならない高さに置く
+  rr(24, y, W - 48, h, "#0c0e16");
+  ro(24, y, W - 48, h, C.white, 2);
+  ro(30, y + 6, W - 60, h - 12, "#3c4254", 2);
+  lines.forEach((s, i) =>
+    txt(s, 48, y + 18 + i * 26, { size: 17, color: (accent && i === 0) ? accent : C.uiFg }));
+}
+function drawKeyHints(items, y) {
+  let x = 20;
+  for (const [key, label] of items) {
+    const kwid = tw(key, 14, true) + 16;
+    rr(x, y, kwid, 22, C.sumi[100]);
+    ro(x, y, kwid, 22, C.sumi[500], 2);
+    txt(key, x + kwid / 2, y + 4, { size: 14, color: C.sumi[900], bold: true, align: "center" });
+    txt(label, x + kwid + 8, y + 4, { size: 14, color: C.sumi[400] });
+    x += kwid + 12 + tw(label, 14) + 18;
+  }
+}
+
+/* ---- 01 タイトル ---- */
+function drawTitle() {
+  rr(0, 0, W, H, "#10121c");
+  for (let i = 0; i < AW; i += 9) {
+    const hh = 40 + Math.round(18 * Math.sin(i * 0.11)) + ((i / 9) % 3 === 0 ? 12 : 0);
+    pr(i, AH - 62 - hh, 8, hh, "#1a1e2c");
+  }
+  drawFloor(AH - 62, AH);
+
+  txt("在庫カウント", W / 2, 54, { size: 54, color: C.mikan[300], bold: true, align: "center" });
+  txt("クエスト", W / 2, 116, { size: 54, color: C.mikan[400], bold: true, align: "center" });
+  txt("- STOCK COUNT QUEST -", W / 2, 182,
+      { size: 16, color: C.wasabi[300], align: "center" });
+
+  // 前回の記録
+  const s = G.save;
+  let y = 222;
+  if (s.lastPlayedDate) {
+    const last = s.days[0];
+    txt("ぜんかい " + s.lastPlayedDate + "   れんぞく " + s.streak + "日   つうさん " +
+        s.totalCounted + "件", W / 2, y, { size: 16, color: C.sumi[400], align: "center" });
+    if (last) {
+      txt("ぜんかいの スキップりつ " + last.skipRate + "%　／　ランク " + last.rank,
+          W / 2, y + 24, { size: 16, color: C.tarako[300], align: "center" });
+    }
+  } else {
+    txt("はじめての 出勤です。", W / 2, y, { size: 16, color: C.sumi[400], align: "center" });
+  }
+
+  stamp(AW / 2 - 6, AH - 90, CHEF_FRONT, CHEF_PAL);
+
+  const blink = Math.floor(G.t * 1.6) % 2 === 0;
+  if (blink) {
+    rr(W / 2 - 150, H - 110, 300, 36, "#0c0e16");
+    ro(W / 2 - 150, H - 110, 300, 36, C.mikan[300], 2);
+    txt("PRESS  ENTER", W / 2, H - 101, { size: 20, color: C.white, bold: true, align: "center" });
+  }
+
+  // 通知と保存の状態
+  const nState = !notifySupported() ? "この環境では使えません"
+               : G.notifyOn ? "ON（タブを開いている間だけ届きます）" : "OFF";
+  txt("N: 仕事中の通知 … " + nState, W / 2, H - 58,
+      { size: 14, color: G.notifyOn ? C.wasabi[300] : C.sumi[500], align: "center" });
+  if (!storageOK) {
+    txt("※ この開き方では記録が残せません（GitHub PagesのURLから開くと残ります）",
+        W / 2, H - 34, { size: 13, color: C.mikan[400], align: "center" });
+  }
+}
+
+/* ---- 02 ブリーフィング（＝通知） ---- */
+function drawBriefing() {
+  rr(0, 0, W, H, "#10121c");
+  const today = todayStr();
+  const done = G.save.lastPlayedDate === today;
+
+  rr(70, 90, W - 140, 300, "#0c0e16");
+  ro(70, 90, W - 140, 300, done ? C.wasabi[500] : C.mikan[400], 3);
+  rr(70, 90, W - 140, 44, done ? C.wasabi[500] : C.mikan[400]);
+  txt(done ? "本日は消化ずみ" : "本日の カウント依頼", 92, 102,
+      { size: 20, color: C.white, bold: true });
+  txt(today, W - 92, 104, { size: 16, color: "#ffffffcc", align: "right" });
+
+  if (done) {
+    txt("本日ぶんの 在庫カウントは おわっています。", 100, 168, { size: 20, color: C.uiFg });
+    txt("もういちど やってみますか？", 100, 204, { size: 17, color: C.sumi[400] });
+  } else {
+    txt("在庫カウントが必要な食材/備品が " + INGREDIENTS.length + " 件あります。",
+        100, 164, { size: 21, color: C.mikan[300], bold: true });
+    txt("現在の在庫数を確認し、本日の納品を含めた在庫数を入力してください。",
+        100, 198, { size: 16, color: C.sumi[300] });
+    let y = 236;
+    for (const ing of INGREDIENTS) {
+      rr(100, y, 22, 22, ing.color);
+      ro(100, y, 22, 22, C.sumi[600], 2);
+      txt(ing.name, 134, y + 2, { size: 17, color: C.uiFg });
+      txt("理由: " + ing.cause, W - 100, y + 4,
+          { size: 14, color: C.sumi[500], align: "right" });
+      y += 34;
+    }
+  }
+  txt("消化しないと 発注できません。", 100, 352, { size: 15, color: C.tarako[300] });
+  drawKeyHints([["Enter", "しごとを はじめる"]], H - 74);
+}
+
+/* ---- 03 厨房 ---- */
+function drawKitchen() {
+  drawWall(0, ROOM.floorTop);
+  drawFloor(ROOM.floorTop, AH);
+
+  pr(14, 10, 30, 20, "#2c3040"); // 換気扇
+  for (let i = 0; i < 3; i++) pr(18 + i * 9, 12, 1, 16, "#464c5c");
+
+  const fr = ROOM.objects[0], pc = ROOM.objects[1];
+  drawFridge(fr.x, fr.y, fr.w, fr.h);
+  drawDesk(pc.x, pc.y, pc.w, pc.h);
+
+  // 棚（いまは飾り）
+  pr(110, 22, 70, 36, C.woodLo);
+  pr(111, 23, 68, 34, C.wood);
+  for (let i = 1; i < 3; i++) pr(111, 22 + i * 12, 68, 2, C.woodLo);
+  const boxCols = ["#cea978", "#bcc4d2", "#d68e70", "#96ba96"];
+  for (let r = 0; r < 3; r++) {
+    for (let i = 0; i < 7; i++) {
+      pr(114 + i * 9, 25 + r * 12, 7, 8, boxCols[(r + i) % 4]);
+      pr(114 + i * 9, 25 + r * 12, 7, 1, "#fff");
+    }
+  }
+
+  drawPlayer();
+
+  txt("れいぞうこ", (fr.x + fr.w / 2) * S, (fr.y + fr.h + 3) * S,
+      { size: 15, color: C.sumi[300], align: "center" });
+  txt("パソコン（在庫システム）", (pc.x + pc.w / 2) * S, (pc.y + pc.h + 3) * S,
+      { size: 15, color: C.wasabi[300], align: "center" });
+  txt("じょうおんだな", 145 * S, 61 * S, { size: 14, color: C.sumi[500], align: "center" });
+
+  drawHUD();
+
+  const o = nearObject();
+  if (o) drawPrompt("Z: " + (o.id === "fridge" ? "あけて かぞえる" : "パソコンに にゅうりょく"),
+                    (o.x + o.w / 2) * S, (o.y + o.h + 24) * S);
+
+  const counted = Object.keys(G.day.counts).length;
+  drawMessageBox(
+    counted === 0
+      ? ["れいぞうこ を あけて、リクエストされた しょくざい を かぞえよう。"]
+      : ["かぞえた: " + counted + "件。パソコン は みぎおく。",
+         "あるくほど きおくが あいまいに なる。"],
+    C.mikan[300]);
+  drawKeyHints([["↑↓←→", "いどう"], ["Z", "しらべる"], ["M", "メモ"]], H - 40);
+}
+
+/* ---- 04 冷蔵庫の中 ---- */
+function drawFridgeScene() {
+  rr(0, 0, W, H, "#121420");
+  const bx = 32, by = 26, bw = 256, bh = 108; // アート座標
+  pr(bx - 4, by - 4, bw + 8, bh + 8, C.steelLo);
+  pr(bx - 2, by - 2, bw + 4, bh + 4, C.steel);
+  pr(bx, by, bw, bh, "#1c242e");
+  for (let i = 0; i < 24; i++) pr(bx + 1, by + 1 + i, bw - 2, 1, "rgba(120,180,200," + (0.10 - i * 0.004) + ")");
+
+  txt("れいぞうこ の なか", W / 2, 44, { size: 19, color: C.wasabi[300], bold: true, align: "center" });
+
+  const f = G.fridge;
+  const cardW = 230, gap = 24;
+  const totalW = INGREDIENTS.length * cardW + (INGREDIENTS.length - 1) * gap;
+  let x = (W - totalW) / 2;
+  INGREDIENTS.forEach((ing, i) => {
+    const sel = (i === f.cursor);
+    const y = 110;
+    const done = !!G.day.counts[ing.id];
+    rr(x, y, cardW, 180, sel ? "#1b2030" : "#141822");
+    ro(x, y, cardW, 180, sel ? C.mikan[300] : "#2d3344", sel ? 3 : 2);
+
+    rr(x + 20, y + 20, 70, 70, ing.color);
+    ro(x + 20, y + 20, 70, 70, "#00000055", 2);
+    txt(ing.name, x + 104, y + 24, { size: 19, color: C.white, bold: true });
+    txt("単位: " + ing.unit, x + 104, y + 52, { size: 14, color: C.sumi[400] });
+    txt("理由: " + ing.cause, x + 20, y + 104, { size: 13, color: C.mikan[300] });
+
+    if (G.day.confirmed[ing.id]) {
+      txt("✓ 入力ずみ", x + 20, y + 136, { size: 17, color: C.wasabi[300], bold: true });
+    } else if (done) {
+      const cl = clarityOf(ing.id);
+      txt("かぞえた: " + (cl < 0.35 ? "？" : G.day.counts[ing.id].value + ing.unit),
+          x + 20, y + 136, { size: 17, color: cl < 0.35 ? C.tarako[300] : C.wasabi[300], bold: true });
+    } else {
+      txt("みカウント", x + 20, y + 136, { size: 17, color: C.sumi[500] });
+    }
+    x += cardW + gap;
+  });
+
+  drawMessageBox(["かぞえる しょくざい を えらぼう。"], C.mikan[300]);
+  drawKeyHints([["←→", "えらぶ"], ["Z", "かぞえる"], ["X", "とじる"]], H - 40);
+}
+
+/* ---- 05 かぞえる ---- */
+function drawCount() {
+  const c = G.count, ing = c.ing;
+  rr(0, 0, W, H, "#1a1e2a");
+  rr(0, 0, W, 34, "#0e1018");
+  txt("かぞえる", 14, 7, { size: 18, color: C.mikan[300], bold: true });
+  txt(ing.name, W - 14, 9, { size: 16, color: C.sumi[400], align: "right" });
+
+  // 左: 食材カード
+  rr(20, 54, 240, 150, "#141822");
+  ro(20, 54, 240, 150, "#2d3344", 2);
+  rr(40, 74, 64, 64, ing.color);
+  ro(40, 74, 64, 64, "#00000055", 2);
+  txt(ing.name, 120, 74, { size: 19, color: C.white, bold: true });
+  txt("カウント単位: " + ing.unit, 120, 102, { size: 14, color: C.sumi[400] });
+  txt("理由: " + ing.cause, 40, 154, { size: 14, color: C.mikan[300] });
+  txt("本日 " + ing.delivery + ing.unit + " 納品予定", 40, 176,
+      { size: 14, color: ing.delivery ? C.wasabi[300] : C.sumi[600] });
+
+  // 右: 棚
+  const sx = 290, sy = 54, sw = W - 310, sh = 260;
+  rr(sx, sy, sw, sh, "#2e3444");
+  ro(sx, sy, sw, sh, "#191d28", 3);
+
+  const sel = countSelectable();
+  const curIdx = sel[c.cursor];
+
+  // 奥列（しゃがんだときだけ見える）
+  if (c.crouch) {
+    for (let i = 0; i < c.items.length; i++) {
+      const it = c.items[i];
+      if (it.row !== 1) continue;
+      drawGood(sx + it.x * 2.2, sy + 70, 44, 66, ing.color, it.counted, i === curIdx, true);
+    }
+  }
+  // 棚板
+  rr(sx + 10, sy + 136, sw - 20, 8, C.steelLo);
+  rr(sx + 10, sy + 226, sw - 20, 8, C.steelLo);
+  // 手前列
+  for (let i = 0; i < c.items.length; i++) {
+    const it = c.items[i];
+    if (it.row !== 0) continue;
+    drawGood(sx + it.x * 2.2, sy + 156, 44, 70, ing.color, it.counted, i === curIdx, false);
+  }
+
+  if (!c.crouch && ing.back > 0) {
+    txt("…おくに なにか ある？", sx + sw - 16, sy + 12,
+        { size: 14, color: C.sumi[500], align: "right" });
+  }
+
+  // カウンタ
+  rr(20, 224, 240, 70, "#141822");
+  ro(20, 224, 240, 70, C.wasabi[600], 3);
+  txt("かぞえた かず", 38, 238, { size: 14, color: C.sumi[400] });
+  txt(String(countTally()), 220, 244, { size: 38, color: C.wasabi[300], bold: true, align: "right" });
+  txt(ing.unit, 240, 266, { size: 15, color: C.sumi[300], align: "right" });
+
+  drawMessageBox(
+    c.crouch ? ["しゃがんで おくを のぞいている。"]
+             : ["Z で ひとつずつ かぞえる。↓ で しゃがむと おくが みえる。"],
+    c.crouch ? C.wasabi[300] : C.mikan[300]);
+  drawKeyHints([["←→", "カーソル"], ["Z", "1つ かぞえる"],
+                ["↓", c.crouch ? "たつ" : "しゃがむ"], ["Enter", "かくてい"]], H - 40);
+}
+function drawGood(x, y, w, h, col, counted, cursor, dim) {
+  ctx.globalAlpha = dim ? 0.75 : 1;
+  rr(x, y, w, h, col);
+  rr(x, y, w, 6, "#ffffffcc");
+  ro(x, y, w, h, "#00000055", 2);
+  ctx.globalAlpha = 1;
+  if (counted) {
+    rr(x, y, w, h, "rgba(22,165,149,0.45)");
+    ctx.strokeStyle = C.white; ctx.lineWidth = 4; ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(x + w * 0.22, y + h * 0.52);
+    ctx.lineTo(x + w * 0.42, y + h * 0.72);
+    ctx.lineTo(x + w * 0.80, y + h * 0.28);
+    ctx.stroke();
+  }
+  if (cursor) {
+    ro(x - 4, y - 4, w + 8, h + 8, C.mikan[300], 3);
+    ctx.fillStyle = C.mikan[300];
+    ctx.beginPath();
+    ctx.moveTo(x + w / 2 - 9, y - 18); ctx.lineTo(x + w / 2 + 9, y - 18);
+    ctx.lineTo(x + w / 2, y - 8); ctx.closePath(); ctx.fill();
+  }
+}
+
+/* ---- 06 PC（在庫システムの入力画面） ---- */
+function drawPC() {
+  rr(0, 0, W, H, "#242838");
+  const mx = 24, my = 18, mw = W - 48, mh = H - 72;
+  rr(mx - 8, my - 8, mw + 16, mh + 16, "#3e4252");
+  rr(mx - 4, my - 4, mw + 8, mh + 8, "#181a22");
+  rr(mx, my, mw, mh, C.sumi[50]);
+
+  // ヘッダ
+  rr(mx, my, mw, 62, C.white);
+  txt("発注トップページ ＞ 発注をはじめる ＞ 在庫カウント", mx + 16, my + 10,
+      { size: 14, color: C.sumi[500] });
+  txt("在庫カウント  ドット亭", mx + 16, my + 30, { size: 24, color: C.sumi[900], bold: true });
+  txt("推定在庫計算時刻", mx + mw - 320, my + 12, { size: 13, color: C.sumi[500] });
+  txt("9:30", mx + mw - 320, my + 32, { size: 16, color: C.sumi[900], bold: true });
+  txt("実績売上連携時刻", mx + mw - 170, my + 12, { size: 13, color: C.sumi[500] });
+  txt("8:00", mx + mw - 170, my + 32, { size: 16, color: C.sumi[900], bold: true });
+  rr(mx, my + 62, mw, 2, C.sumi[200]);
+
+  // 通知バー
+  const ny = my + 72;
+  const done = remaining() === 0;
+  rr(mx + 12, ny, mw - 24, 52, done ? C.wasabi[50] : C.mikan[50]);
+  ro(mx + 12, ny, mw - 24, 52, done ? C.wasabi[500] : C.mikan[300], 2);
+  if (done) {
+    txt("お疲れさまでした！「発注に戻る」から発注をはじめてください。",
+        mx + 32, ny + 16, { size: 17, color: C.wasabi[700], bold: true });
+  } else {
+    txt("在庫カウントが必要な食材/備品が " + remaining() + " 件あります。",
+        mx + 32, ny + 8, { size: 17, color: C.mikan[700], bold: true });
+    txt("現在の在庫数を確認し、本日の納品を含めた在庫数を入力してください。",
+        mx + 32, ny + 30, { size: 14, color: C.sumi[700] });
+  }
+
+  txt("残り", mx + 14, ny + 64, { size: 16, color: C.sumi[900], bold: true });
+  txt(String(remaining()), mx + 48, ny + 58, { size: 22, color: C.wasabi[600], bold: true });
+  txt("件", mx + 72, ny + 64, { size: 16, color: C.sumi[900], bold: true });
+
+  // 行
+  let ry = ny + 92;
+  INGREDIENTS.forEach((ing, i) => {
+    const v = G.day.inputs[ing.id] || 0;
+    const conf = !!G.day.confirmed[ing.id];
+    const warn = !conf && warnsAt(v, ing.theo);
+    const cur = (G.pc.row === i);
+    const rh = warn ? 72 : 54;
+
+    rr(mx + 12, ry, mw - 24, rh, warn ? C.tarako[50] : conf ? C.wasabi[50] : C.white);
+    if (cur) ro(mx + 12, ry, mw - 24, rh, C.mikan[400], 3);
+    else if (warn) ro(mx + 12, ry, mw - 24, rh, C.tarako[500], 2);
+    else rr(mx + 12, ry + rh - 2, mw - 24, 2, C.sumi[100]);
+
+    rr(mx + 24, ry + 10, 34, 34, ing.color);
+    ro(mx + 24, ry + 10, 34, 34, C.sumi[300], 2);
+    txt(ing.name, mx + 70, ry + (ing.delivery ? 8 : 16), { size: 18, color: C.sumi[900], bold: true });
+    if (ing.delivery) {
+      txt("本日" + ing.delivery + ing.unit + " 納品予定", mx + 70, ry + 32,
+          { size: 14, color: C.wasabi[600] });
+    }
+
+    // ステッパー
+    const stx = mx + mw - 300, stw = 160;
+    rr(stx, ry + 12, stw, 32, C.white);
+    ro(stx, ry + 12, stw, 32, warn ? C.tarako[500] : cur ? C.mikan[400] : C.sumi[300], 2);
+    rr(stx + 2, ry + 14, 30, 28, C.sumi[50]);
+    txt("−", stx + 17, ry + 18, { size: 17, color: C.sumi[700], bold: true, align: "center" });
+    rr(stx + stw - 32, ry + 14, 30, 28, C.sumi[50]);
+    txt("＋", stx + stw - 17, ry + 18, { size: 17, color: C.sumi[700], bold: true, align: "center" });
+    txt(v + ing.unit, stx + stw - 40, ry + 18, { size: 18, color: C.sumi[900], bold: true, align: "right" });
+
+    // ボタン
+    const bx = mx + mw - 126;
+    if (conf) {
+      txt("✓ 確定済み", bx, ry + 18, { size: 16, color: C.wasabi[600], bold: true });
+    } else {
+      rr(bx, ry + 12, 104, 32, C.wasabi[500]);
+      ro(bx, ry + 12, 104, 32, C.wasabi[700], 2);
+      txt("在庫確定", bx + 52, ry + 19, { size: 16, color: C.white, bold: true, align: "center" });
+    }
+    if (warn) {
+      txt("⚠ " + warn, mx + mw - 36, ry + 48,
+          { size: 15, color: C.tarako[600], bold: true, align: "right" });
+    }
+    ry += rh + 4;
+  });
+
+  // 下のバー
+  rr(0, H - 44, W, 44, "#0e1018");
+  const cl = overallClarity();
+  txt("きおく " + Math.round(cl * 100) + "%", 16, H - 33,
+      { size: 15, color: cl > 0.5 ? C.wasabi[300] : C.mikan[300], bold: true });
+  txt("↑↓ 行 ／ ←→ すうじ ／ Enter 在庫確定 ／ M メモ ／ X やめる", W - 16, H - 33,
+      { size: 15, color: C.sumi[400], align: "right" });
+
+  if (G.pc.dialog) drawWarningDialog();
+}
+function drawWarningDialog() {
+  const d = G.pc.dialog;
+  rr(0, 0, W, H, "rgba(0,0,0,0.55)");
+  const dw = 640, dh = 250, dx = (W - dw) / 2, dy = 130;
+  rr(dx, dy, dw, dh, C.white);
+  ro(dx, dy, dw, dh, C.tarako[500], 4);
+  rr(dx, dy, dw, 44, C.tarako[500]);
+  txt("⚠  けいこく", dx + 18, dy + 12, { size: 20, color: C.white, bold: true });
+
+  txt(d.msg, dx + 28, dy + 68, { size: 23, color: C.tarako[600], bold: true });
+  txt(d.ing.name + "　システム想定 " + d.ing.theo + d.ing.unit +
+      "　→　入力 " + G.day.inputs[d.ing.id] + d.ing.unit,
+      dx + 28, dy + 108, { size: 17, color: C.sumi[900] });
+  txt("ほんとうに その かず で あっていますか？", dx + 28, dy + 134,
+      { size: 16, color: C.sumi[700] });
+
+  const opts = ["数えなおす", "このまま確定"];
+  opts.forEach((label, i) => {
+    const bw2 = 200, bx = dx + 28 + i * (bw2 + 20), by = dy + 176;
+    const on = (d.choice === i);
+    rr(bx, by, bw2, 44, i === 0 ? C.sumi[100] : C.tarako[500]);
+    ro(bx, by, bw2, 44, on ? C.sumi[900] : (i === 0 ? C.sumi[400] : C.tarako[700]), on ? 4 : 2);
+    txt(label, bx + bw2 / 2, by + 12, {
+      size: 17, bold: true, align: "center", color: i === 0 ? C.sumi[900] : C.white });
+  });
+  txt("※ 数えなおすと 冷蔵庫まで もどることになる", dx + 470, dy + 188,
+      { size: 14, color: C.mikan[500] });
+}
+
+/* ---- てもちメモ ---- */
+function drawMemo() {
+  rr(0, 0, W, H, "rgba(0,0,0,0.6)");
+  const px = 120, py = 90, pw = W - 240, ph = 340;
+  rr(px, py, pw, ph, "#ece6d0");
+  ro(px, py, pw, ph, "#b0a88c", 3);
+  rr(px + 96, py + 12, 2, ph - 24, "#e29c96");
+  txt("てもちメモ", px + 24, py + 18, { size: 20, color: "#564f44", bold: true });
+  txt("M または X で とじる", px + pw - 24, py + 22,
+      { size: 14, color: "#8a8270", align: "right" });
+
+  let y = py + 64;
+  for (const ing of INGREDIENTS) {
+    const c = G.day.counts[ing.id];
+    rr(px + 20, y + 34, pw - 40, 2, "#d2caae");
+    txt(ing.name, px + 112, y, { size: 19, color: "#30302c" });
+    if (!c) {
+      txt("—", px + pw - 32, y, { size: 19, color: "#a09880", align: "right" });
+    } else {
+      const cl = clarityOf(ing.id);
+      if (cl < 0.35) {
+        txt("？ ？ " + ing.unit, px + pw - 32, y,
+            { size: 19, color: "#b8786e", bold: true, align: "right" });
+      } else {
+        txt(c.value + " " + ing.unit, px + pw - 32, y, {
+          size: 19, bold: cl > 0.7, align: "right",
+          color: cl > 0.7 ? "#30302c" : "#96702c" });
+      }
+    }
+    y += 54;
+  }
+  txt("※ あるいている あいだに きおくが あいまいになる", px + 112, py + ph - 48,
+      { size: 15, color: "#aa645c" });
+}
+
+/* ---- 07 リザルト ---- */
+function drawResult() {
+  const r = G.result;
+  rr(0, 0, W, H, "#12141e");
+  for (let i = 0; i < W; i += 24) rr(i, 0, 12, H, "#141724");
+
+  rr(0, 0, W, 64, "#0c0e16");
+  txt("しゅうぎょう！", W / 2, 16, { size: 28, color: C.mikan[300], bold: true, align: "center" });
+
+  const px = 120, py = 96, pw = W - 240, ph = 250;
+  rr(px, py, pw, ph, "#0e1018");
+  ro(px, py, pw, ph, C.white, 2);
+
+  const rows = [
+    ["カウント件数", r.items + " / " + r.items + " 件", C.white],
+    ["しょようじかん", Math.floor(r.seconds / 60) + "分 " + (r.seconds % 60) + "びょう", C.white],
+    ["せいかくさ", r.accuracy + " %", r.accuracy >= 75 ? C.wasabi[300] : C.mikan[300]],
+    ["スキップりつ", r.skipRate + " %", r.skipRate > 0 ? C.tarako[300] : C.wasabi[300]],
+  ];
+  rows.forEach(([a, b, col], i) => {
+    const y = py + 28 + i * 40;
+    txt(a, px + 32, y, { size: 17, color: C.sumi[400] });
+    txt(b, px + pw - 32, y - 2, { size: 20, color: col, bold: true, align: "right" });
+  });
+
+  const by = py + ph - 62;
+  rr(px + 32, by, pw - 64, 44, "#1c1414");
+  ro(px + 32, by, pw - 64, 44, C.tarako[500], 2);
+  txt("ランク", px + 52, by + 12, { size: 15, color: C.sumi[400] });
+  txt(r.rank, px + 112, by + 6, { size: 26, color: C.tarako[300], bold: true });
+  txt(r.rank === "S" ? "「完璧。ただし誰も見ていない」"
+    : r.rank === "A" ? "「よく数えた」"
+    : r.rank === "B" ? "「まあ発注はできる」"
+    : "「とりあえず 発注は できる」",
+      px + 152, by + 12, { size: 17, color: C.sumi[300] });
+
+  txt("あしたも " + INGREDIENTS.length + "件 きます。", W / 2, py + ph + 30,
+      { size: 20, color: C.mikan[300], bold: true, align: "center" });
+  txt("— これが 毎日 おきている —", W / 2, py + ph + 62,
+      { size: 16, color: C.sumi[500], align: "center" });
+
+  if (storageOK) {
+    txt("きろくしました（れんぞく " + G.save.streak + "日）", W / 2, H - 56,
+        { size: 15, color: C.wasabi[300], align: "center" });
+  } else {
+    txt("※ この開き方では記録が残せません", W / 2, H - 56,
+        { size: 14, color: C.mikan[400], align: "center" });
+  }
+  drawKeyHints([["Enter", "タイトルへ"]], H - 32);
+}
+
+/* =========================================================================
+   メインループ
+   ========================================================================= */
+let prev = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - prev) / 1000);
+  prev = now; G.t += dt;
+
+  if (G.scene === "kitchen" && !G.memoOpen) updateKitchen(dt);
+
+  ctx.clearRect(0, 0, W, H);
+  switch (G.scene) {
+    case "title":    drawTitle(); break;
+    case "briefing": drawBriefing(); break;
+    case "kitchen":  drawKitchen(); break;
+    case "fridge":   drawFridgeScene(); drawHUD(); break;
+    case "count":    drawCount(); break;
+    case "pc":       drawPC(); break;
+    case "result":   drawResult(); break;
+  }
+  if (G.memoOpen) drawMemo();
+
+  requestAnimationFrame(frame);
+}
+
+G.save = loadSave();
+cv.focus();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
