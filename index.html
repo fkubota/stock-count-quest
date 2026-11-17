@@ -220,21 +220,24 @@ function notifyState(){
 
 /* ---------------------------------------------------------------- 保管場所 */
 const PLACES = {
-  fridge:   { label:"れいぞうこ",         room:"kitchen",  kinds:["pieces","liquid"] },
-  shelf:    { label:"じょうおんだな",     room:"kitchen",  kinds:["boxes","liquid"] },
+  fridge:   { label:"れいぞうこ",         room:"kitchen",  kinds:["pieces","liquid","pile","weigh"] },
+  shelf:    { label:"じょうおんだな",     room:"kitchen",  kinds:["boxes","liquid","weigh"] },
   prep:     { label:"さぎょうだい",       room:"kitchen",  kinds:["vats"] },
   freezer:  { label:"れいとうこ",         room:"backyard", kinds:["frozen"] },
-  backshelf:{ label:"バックヤードのたな", room:"backyard", kinds:["boxes","pieces"] },
+  backshelf:{ label:"バックヤードのたな", room:"backyard", kinds:["boxes","pieces","pile","weigh"] },
 };
 
 /* ---------------------------------------------------------------- 品目カタログ */
 const CATALOG = [
   {id:"pork",     name:"ぶたバラ肉",     unit:"袋",    color:"#e8a294", kind:"pieces", at:["fridge"]},
   {id:"chicken",  name:"とりもも肉",     unit:"袋",    color:"#eebba2", kind:"pieces", at:["fridge"]},
-  {id:"tofu",     name:"とうふ",         unit:"丁",    color:"#e6e2cc", kind:"pieces", at:["fridge"]},
-  {id:"egg",      name:"たまご",         unit:"パック", color:"#e9d9a8", kind:"pieces", at:["fridge"]},
-  {id:"cabbage",  name:"キャベツ",       unit:"玉",    color:"#c6dec6", kind:"pieces", at:["fridge","backshelf"]},
-  {id:"onion",    name:"たまねぎ",       unit:"ネット", color:"#d8c08a", kind:"pieces", at:["backshelf"]},
+  {id:"tofu",     name:"とうふ",         unit:"丁",    color:"#e6e2cc", kind:"pieces", shape:"carton", at:["fridge"]},
+  {id:"egg",      name:"たまご",         unit:"パック", color:"#e9d9a8", kind:"pieces", shape:"carton", at:["fridge"]},
+  {id:"cabbage",  name:"キャベツ",       unit:"玉",    color:"#a9ca88", kind:"pile", shape:"round",  at:["fridge","backshelf"]},
+  {id:"onion",    name:"たまねぎ",       unit:"個",    color:"#c9a05e", kind:"pile", shape:"round",  at:["backshelf"]},
+  {id:"pepper",   name:"ピーマン",       unit:"個",    color:"#4f9e49", kind:"pile", shape:"pepper", at:["fridge","backshelf"]},
+  {id:"tomato",   name:"トマト",         unit:"個",    color:"#d6483c", kind:"pile", shape:"round",  at:["fridge"]},
+  {id:"jagaimo",  name:"じゃがいも",     unit:"個",    color:"#caa268", kind:"pile", shape:"ellipse",at:["backshelf"]},
   {id:"potato",   name:"れいとうポテト", unit:"袋",    color:"#e8d7a8", kind:"frozen", at:["freezer"]},
   {id:"shrimp",   name:"れいとうエビ",   unit:"袋",    color:"#f0b6a6", kind:"frozen", at:["freezer"]},
   {id:"gyoza",    name:"れいとうギョウザ",unit:"袋",   color:"#dcc9a0", kind:"frozen", at:["freezer"]},
@@ -247,6 +250,9 @@ const CATALOG = [
   {id:"dashi",    name:"和風だし",       unit:"バット", color:"#b08848", kind:"vats",   at:["prep"]},
   {id:"curry",    name:"カレールー",     unit:"バット", color:"#a06030", kind:"vats",   at:["prep"]},
   {id:"sauce",    name:"じかせいダレ",   unit:"バット", color:"#8a5c34", kind:"vats",   at:["prep"]},
+  {id:"flour",    name:"こむぎこ",       unit:"g",     color:"#ece4cc", kind:"weigh",  at:["fridge","shelf","backshelf"]},
+  {id:"panko",    name:"パンこ",         unit:"g",     color:"#e2cfa4", kind:"weigh",  at:["fridge","shelf","backshelf"]},
+  {id:"sesame",   name:"しろごま",       unit:"g",     color:"#ded0b4", kind:"weigh",  at:["fridge","shelf","backshelf"]},
 ];
 
 const FILLS = [1, 1, 0.92, 0.85, 0.78, 0.7, 0.62, 0.55, 0.45, 0.38, 0.3, 0.22, 0.15, 0.08];
@@ -254,7 +260,11 @@ const FILLS = [1, 1, 0.92, 0.85, 0.78, 0.7, 0.62, 0.55, 0.45, 0.38, 0.3, 0.22, 0
 // ひとつの保管場所に置かれた、ある品目のかたまり
 function makeLot(item){
   const lot = { itemId:item.id, kind:item.kind };
-  if(item.kind==="pieces" || item.kind==="frozen"){
+  if(item.kind==="pile"){
+    lot.pieces = ri(7, 16);
+    lot.layer = [];
+    for(let i=0;i<lot.pieces;i++) lot.layer.push(i<Math.ceil(lot.pieces*0.45)?0:(i<Math.ceil(lot.pieces*0.78)?1:2));
+  } else if(item.kind==="pieces" || item.kind==="frozen"){
     lot.pieces = ri(3, 11);
   } else if(item.kind==="liquid"){
     lot.canSize = pick([4, 4, 1.8]);
@@ -265,6 +275,14 @@ function makeLot(item){
     lot.boxes = [];
     const n = ri(2, 4);
     for(let i=0;i<n;i++) lot.boxes.push(RND() < 0.22 ? 0 : ri(2, 8));
+  } else if(item.kind==="weigh"){
+    // 容器に入っていて、はかりは中身＋容器の重さ（風袋）を表示する
+    lot.cons=[];
+    const n=ri(2,3);
+    for(let i=0;i<n;i++){
+      const tare=pick([180,240,320,460]);
+      lot.cons.push({tare, net: ri(2,18)*50});
+    }
   } else if(item.kind==="vats"){
     lot.vats = [];
     const n = ri(2, 3);
@@ -275,9 +293,10 @@ function makeLot(item){
   return lot;
 }
 function lotAmount(lot){
-  if(lot.kind==="pieces"||lot.kind==="frozen") return lot.pieces;
+  if(lot.kind==="pieces"||lot.kind==="frozen"||lot.kind==="pile") return lot.pieces;
   if(lot.kind==="liquid") return lot.cans.reduce((a,b)=>a+b,0) * lot.canSize;
   if(lot.kind==="boxes")  return lot.boxes.reduce((a,b)=>a+b,0);
+  if(lot.kind==="weigh")  return lot.cons.reduce((a,c)=>a+c.net,0);
   if(lot.kind==="vats")   return lot.vats.reduce((a,b)=>a+b,0) + lot.potSize*lot.potFill;
   return 0;
 }
@@ -292,7 +311,7 @@ function buildStore(){
   for(const p in PLACES){
     const kinds = PLACES[p].kinds;
     const cand = shuffled(CATALOG.filter(i => kinds.indexOf(i.kind)>=0 && i.at.indexOf(p)>=0 && !used[i.id]));
-    const n = Math.min(cand.length, ri(2,3));
+    const n = Math.min(cand.length, ri(3,4));
     for(let i=0;i<n;i++){
       const it = cand[i];
       store[p].push(makeLot(it));
@@ -343,6 +362,7 @@ function buildRequests(store, used){
     else if(r < 0.62) theo = Math.max(1, Math.round(expected * (1.6 + RND()*1.0)));
     else              theo = Math.max(1, Math.round(expected * (0.22 + RND()*0.32)));
 
+    if(it.unit==="g") theo = Math.max(50, Math.round(theo/50)*50);
     return { id, name:it.name, unit:it.unit, color:it.color, kind:it.kind,
              places:used[id].slice(), expected, delivery, theo,
              reason: it.kind==="vats" ? "仕掛品のため毎回" : pick(REASONS) };
@@ -358,12 +378,16 @@ function newDay(){
   const reqs  = buildRequests(built.store, built.used);
   return {
     store: built.store, reqs,
-    inputs:{}, touched:{}, confirmed:{}, opened:{},   // opened: "place:lotIdx:boxIdx"
+    inputs:{}, touched:{}, confirmed:{}, opened:{}, carry:[],  // carry: {place,li,bi}
     seenList:false, skips:0, walked:0, startedAt:Date.now(),
   };
 }
 const remaining = () => G.day.reqs.filter(r => !G.day.confirmed[r.id]).length;
 const reqOf = id => G.day.reqs.find(r => r.id === id);
+const CARRY_MAX = 4;
+const conOf = c => G.day.store[c.place][c.li].cons[c.bi];
+const carryIdx = (place,li,bi) =>
+  G.day.carry.findIndex(c=>c.place===place&&c.li===li&&c.bi===bi);
 
 /* ---------------------------------------------------------------- 入力 */
 const held = Object.create(null);
@@ -386,7 +410,8 @@ const ROOMS = {
     {id:"shelf",  prompt:"しらべる", x:58,  y:16,  w:58, h:42, zone:{x:54, y:58, w:66, h:20}},
     {id:"door_b", prompt:"でる",     x:130, y:14,  w:26, h:44, zone:{x:124,y:58, w:38, h:20}, label:"▶ バックヤード"},
     {id:"pc",     prompt:"つかう",   x:236, y:22,  w:52, h:36, zone:{x:230,y:58, w:64, h:20}, label:"パソコン"},
-    {id:"prep",   prompt:"しらべる", x:96,  y:96,  w:86, h:26, zone:{x:92, y:122,w:94, h:22}},
+    {id:"prep",   prompt:"しらべる", x:88,  y:96,  w:80, h:26, zone:{x:84, y:122,w:88, h:22}},
+    {id:"weighst",prompt:"はかる",   x:196, y:98,  w:52, h:24, zone:{x:192,y:122,w:60, h:22}, label:"はかりだい"},
   ]},
   backyard: { name:"バックヤード", objects:[
     {id:"door_k",   prompt:"もどる",  x:16,  y:14, w:26, h:44, zone:{x:10, y:58, w:38, h:20}, label:"◀ ちゅうぼう"},
@@ -426,9 +451,10 @@ function updateRoom(dt){
 function openPlace(placeId){
   const boxes=[];
   G.day.store[placeId].forEach((lot,li)=>{
-    if(lot.kind==="boxes") lot.boxes.forEach((_,bi)=>boxes.push({li,bi}));
+    if(lot.kind==="boxes") lot.boxes.forEach((_,bi)=>boxes.push({t:"box",li,bi}));
+    if(lot.kind==="weigh") lot.cons.forEach((_,bi)=>boxes.push({t:"weigh",li,bi}));
   });
-  G.view = { place:placeId, boxes, cursor:0 };
+  G.view = { place:placeId, boxes, cursor:0, scale:null, peek:false };
   G.scene = "place";
   SFX.open();
 }
@@ -502,20 +528,38 @@ function onKey(key){
       if(o.id==="door_b"){ G.room="backyard"; player.x=36; player.y=112; SFX.door(); return; }
       if(o.id==="door_k"){ G.room="kitchen";  player.x=140; player.y=112; SFX.door(); return; }
       if(o.id==="pc"){ SFX.tick(); openPC(); return; }
+      if(o.id==="weighst"){ SFX.open(); G.scene="weighst"; return; }
       openPlace(o.id);
       return;
     }
 
+    case "weighst":
+      if(key==="x"||key==="Escape"){ SFX.close(); G.scene="room"; return; }
+      if(key==="z"){ if(G.day.carry.length){ G.day.carry.length=0; SFX.close(); } }
+      return;
+
     case "place": {
       const v=G.view;
       if(key==="x"||key==="Escape"||key==="z" && v.boxes.length===0){ SFX.close(); G.scene="room"; return; }
+      if(key==="ArrowUp"||key==="ArrowDown"){     // 奥をのぞく
+        if(G.day.store[v.place].some(l=>l.kind==="pile")){ v.peek=!v.peek; SFX.open(); }
+        return;
+      }
       if(v.boxes.length===0) return;
       if(key==="ArrowLeft"){ v.cursor=clamp(v.cursor-1,0,v.boxes.length-1); SFX.move(); }
       if(key==="ArrowRight"){ v.cursor=clamp(v.cursor+1,0,v.boxes.length-1); SFX.move(); }
       if(key==="z"){
-        const b=v.boxes[v.cursor], kk=v.place+":"+b.li+":"+b.bi;
-        G.day.opened[kk]=!G.day.opened[kk];
-        G.day.opened[kk]?SFX.open():SFX.close();
+        const b=v.boxes[v.cursor];
+        if(b.t==="weigh"){                      // 持っていく／棚にもどす
+          const ix=carryIdx(v.place,b.li,b.bi);
+          if(ix>=0){ G.day.carry.splice(ix,1); SFX.close(); }
+          else if(G.day.carry.length<CARRY_MAX){ G.day.carry.push({place:v.place,li:b.li,bi:b.bi}); SFX.open(); }
+          else SFX.warn();
+        } else {
+          const kk=v.place+":"+b.li+":"+b.bi;
+          G.day.opened[kk]=!G.day.opened[kk];
+          G.day.opened[kk]?SFX.open():SFX.close();
+        }
       }
       return;
     }
@@ -540,7 +584,7 @@ function onKey(key){
       const r=rs[p.row];
       if(key==="ArrowLeft"||key==="ArrowRight"){
         G.day.confirmed[r.id]=false;
-        const step=(r.kind==="liquid"||r.kind==="vats")?0.5:1;
+        const step=(r.unit==="g")?50:(r.kind==="liquid"||r.kind==="vats")?0.5:1;
         const d=(key==="ArrowLeft")?-step:step;
         G.day.inputs[r.id]=Math.max(0,Math.round(((G.day.inputs[r.id]||0)+d)*10)/10);
         G.day.touched[r.id]=true; SFX.tick();
@@ -608,6 +652,13 @@ function drawPrepTable(x,y,w,h){
   for(let i=0;i<3;i++){ pr(x+10+i*24,y-5,18,7,"#8c9298"); pr(x+11+i*24,y-4,16,5,"#a8742c"); }
   pr(x+w-20,y-11,15,13,"#9aa0aa"); pr(x+w-19,y-10,13,11,"#6b5230");
 }
+function drawWeighStand(x,y,w,h){
+  pr(x,y,w,5,C.steelHi); pr(x,y+5,w,h-9,C.steel);
+  pr(x+2,y+h-4,4,4,C.steelLo); pr(x+w-6,y+h-4,4,4,C.steelLo);
+  pr(x+Math.round(w/2)-11,y-9,22,10,"#c6ccd6");           // はかり
+  pr(x+Math.round(w/2)-8,y-7,16,5,"#0d1a14");
+  pr(x+Math.round(w/2)-5,y-6,10,3,"#6cf0a8");
+}
 function drawPlayer(){
   pr(player.x-1,player.y+15,12,2,"rgba(0,0,0,0.35)");
   stamp(Math.round(player.x),Math.round(player.y),
@@ -631,6 +682,8 @@ function drawHUD(){
   txt("じかん",150,7,{size:15,color:C.sumi[400]});
   txt(String(Math.floor(sec/60)).padStart(2,"0")+":"+String(sec%60).padStart(2,"0"),
       206,5,{size:17,color:C.white,bold:true});
+  if(G.day.carry.length) txt("もっている "+G.day.carry.length+"こ",W-50,7,
+      {size:14,color:C.mikan[300],align:"right"});
   txt(BGM.on?"♪":"♪ OFF",W-14,7,{size:14,color:BGM.on?C.wasabi[300]:C.sumi[600],align:"right"});
 }
 function drawPrompt(text,cx,cy){
@@ -711,6 +764,7 @@ function drawRoom(){
     if(o.id==="shelf"||o.id==="backshelf") drawShelfBody(o.x,o.y,o.w,o.h);
     if(o.id==="pc")       drawDesk(o.x,o.y,o.w,o.h);
     if(o.id==="prep")     drawPrepTable(o.x,o.y,o.w,o.h);
+    if(o.id==="weighst")  drawWeighStand(o.x,o.y,o.w,o.h);
     if(o.id.indexOf("door")===0) drawDoor(o.x,o.y,o.w,o.h);
   }
   drawPlayer();
@@ -735,7 +789,7 @@ function drawPlace(){
   const cold=(v.place==="freezer"), warm=(v.place==="shelf"||v.place==="backshelf");
   rr(0,0,W,H, cold?"#0d1218":warm?"#171a24":"#0f1118");
 
-  const bx=40, by=70, bw=W-80, bh=330;
+  const bx=40, by=60, bw=W-80, bh=400;
   if(warm){
     rr(bx-10,by-10,bw+20,bh+20,C.woodLo); rr(bx,by,bw,bh,"#6b4e30"); ro(bx,by,bw,bh,"#3e2c1a",3);
   } else if(v.place==="prep"){
@@ -746,68 +800,203 @@ function drawPlace(){
     for(let i=0;i<40;i++) rr(bx+3,by+3+i,bw-6,1,
       "rgba("+(cold?"180,224,240":"130,190,210")+","+(0.12-i*0.0027)+")");
   }
-  txt(place.label,W/2,40,{size:19,color:cold?"#a8d8e8":warm?C.mikan[300]:C.wasabi[300],
+  txt(place.label,W/2,32,{size:19,color:cold?"#a8d8e8":warm?C.mikan[300]:C.wasabi[300],
       bold:true,align:"center"});
 
-  const base = by+bh-48;                 // ものを置く高さ（下にラベル用の余白をとる）
-  rr(bx+8,base,bw-16,8,warm?C.woodLo:C.steelLo);
-  const slotW = (bw-20)/Math.max(1,lots.length);
+  const hasWeigh=lots.some(l=>l.kind==="weigh"), scaleH=0;
 
-  lots.forEach((lot,li)=>{
-    const sx = bx+10+li*slotW, cx = sx+slotW/2;
-    const item = CATALOG.find(i=>i.id===lot.itemId);
-    if(li>0) rr(sx,by+10,1,bh-40,"rgba(255,255,255,0.07)");
-    txt(item.name,cx,by+14,{size:16,color:C.sumi[300],align:"center"});
-    drawLot(lot,item,sx+8,slotW-16,base,li,v);
+  // 段に割り振る。1段に1〜2ロット置いて、縦にも横にも並ぶようにする
+  const nLv = Math.min(3, Math.max(2, Math.ceil(lots.length/1.5)));
+  const per = Math.ceil(lots.length/nLv);
+  const levels=[];
+  for(let i=0;i<lots.length;i+=per){
+    levels.push(lots.slice(i,i+per).map((lot,j)=>({lot, li:i+j})));
+  }
+  const top=by+12+scaleH, lvH=(bh-22-scaleH)/levels.length;
+
+  levels.forEach((row,ri)=>{
+    const ly=top+ri*lvH, boardY=Math.round(ly+lvH-26);
+    rr(bx+8,boardY,bw-16,8, warm?C.woodLo:C.steelLo);
+    if(!warm) rr(bx+8,boardY,bw-16,3,C.steelHi);
+    const availH=lvH-38, slotW=(bw-24)/row.length;
+    row.forEach((cell,ci)=>{
+      const sx=bx+12+ci*slotW;
+      const item=CATALOG.find(i=>i.id===cell.lot.itemId);
+      if(ci>0) rr(sx-2,ly+4,1,lvH-32,"rgba(255,255,255,0.06)");
+      drawLot(cell.lot,item,sx+6,slotW-12,boardY,cell.li,v,availH);
+      txt(item.name,sx+slotW/2,boardY+10,
+          {size:14,color:warm?"#eadcbe":C.sumi[300],align:"center"});
+    });
   });
 
   const hints=[["X","とじる"]];
-  if(v.boxes.length) hints.unshift(["←→","えらぶ"],["Z","あける"]);
+  if(v.boxes.length) hints.unshift(["←→","えらぶ"],["Z",hasWeigh?"もつ／もどす":"あける"]);
+  if(lots.some(l=>l.kind==="pile")) hints.unshift(["↑↓", v.peek?"もどす":"おくを のぞく"]);
   drawKeyHints(hints,H-34);
 }
-
-function drawLot(lot,item,sx,sw,base,li,v){
+function drawLot(lot,item,sx,sw,base,li,v,availH){
   if(lot.kind==="pieces"||lot.kind==="frozen"){
-    const n=lot.pieces, per=Math.min(5,Math.max(3,Math.ceil(n/2)));
-    const bwid=Math.min(40,Math.floor((sw-10)/per)), bhgt=Math.round(bwid*1.5);
-    const cols=Math.min(per,n), ox=(sw-(cols*(bwid+2)-2))/2;
-    for(let i=0;i<n;i++){
-      const r=Math.floor(i/per), c=i%per;
-      const jx=((i*37)%7)-3, jy=((i*53)%5)-2;
-      const x=sx+ox+c*(bwid+2)+jx+(r%2?6:0), y=base-bhgt-r*(bhgt-8)+jy;
-      drawBag(x,y,bwid,bhgt,item.color,lot.kind==="frozen");
+    const n=lot.pieces;
+    const rows=n>4?2:1, cols=Math.ceil(n/rows);
+    let bw2=Math.min(64,Math.floor((sw-10)/(cols*0.88+0.2)));
+    let bh2=Math.round(bw2*1.35);
+    const need=bh2+(rows-1)*18;
+    if(need>availH){ const kk=availH/need; bw2=Math.max(10,Math.floor(bw2*kk)); bh2=Math.round(bh2*kk); }
+    const step=Math.max(8,Math.round(bw2*0.86));
+    const clusterW=(cols-1)*step+bw2, ox=(sw-clusterW)/2;
+    for(let r=rows-1;r>=0;r--){          // 奥の列から描いて、手前が重なるようにする
+      for(let c=0;c<cols;c++){
+        const i=r*cols+c; if(i>=n) continue;
+        const jx=Math.round((jit(li*7+i,3)-0.5)*step*0.34);
+        const jy=Math.round((jit(li*11+i,5)-0.5)*5);
+        const x=sx+ox+c*step+jx+(r===1?Math.round(step*0.42):0);
+        const y=base-bh2-r*18+jy;
+        if(item.shape==="carton") drawCarton(x,y,bw2,bh2,item.color);
+        else drawBag(x,y,bw2,bh2,item.color,lot.kind==="frozen");
+      }
     }
+  } else if(lot.kind==="pile"){
+    const n=lot.pieces;
+    const crateW=Math.min(sw-10,Math.max(170,n*16+70)), crateX=sx+(sw-crateW)/2;
+    const crateH=Math.min(34,Math.round(availH*0.3));
+    let d=Math.round(item.shape==="ellipse"?Math.min(48,crateW/5.2):Math.min(42,crateW/5.6));
+    let dh=Math.round(item.shape==="ellipse"?d*0.72:(item.shape==="pepper"?d*1.25:d));
+    const lift=v.peek?Math.round(dh*0.62):Math.round(dh*0.17);   // 奥をのぞくと持ち上がって見える
+    for(let L=2;L>=0;L--){
+      for(let i=0;i<n;i++){
+        if(lot.layer[i]!==L) continue;
+        const sz=1+(jit(li*13+i,9)-0.5)*0.22;
+        const ww=Math.round(d*sz), hh=Math.round(dh*sz);
+        const x=crateX+12+Math.round(jit(li*5+i,1)*(crateW-24-ww));
+        const y=base-crateH+6-hh-L*lift-Math.round(jit(li*3+i,7)*4);
+        drawVeg(item.shape,x,y,ww,hh,item.color);
+      }
+    }
+    rr(crateX,base-crateH,crateW,crateH,"#5e6672");             // コンテナ
+    rr(crateX+2,base-crateH+2,crateW-4,crateH-4,"#79828f");
+    for(let i=0;i<5;i++) rr(crateX+8+i*((crateW-16)/5),base-crateH+6,4,crateH-12,"#5e6672");
+    ro(crateX,base-crateH,crateW,crateH,"#434a54",2);
   } else if(lot.kind==="liquid"){
-    const n=lot.cans.length, bwid=Math.min(52,Math.floor((sw-10)/n)-6), bhgt=Math.round(bwid*1.85);
-    const ox=(sw-(n*(bwid+8)-8))/2;
-    lot.cans.forEach((f,i)=>drawBottle(sx+ox+i*(bwid+8),base-bhgt,bwid,bhgt,f,lot.canSize));
+    const n=lot.cans.length;
+    let bh2=Math.min(100,availH-4), bw2=Math.round(bh2*0.52);
+    let step=bw2+7;
+    if((n-1)*step+bw2>sw-8){
+      bw2=Math.max(16,Math.floor((sw-8-(n-1)*7)/n)); bh2=Math.round(bw2/0.52); step=bw2+7;
+      if(bh2>availH-4){ bh2=availH-4; }
+    }
+    const ox=(sw-((n-1)*step+bw2))/2;
+    lot.cans.forEach((f,i)=>drawBottle(sx+ox+i*step+Math.round((jit(li+i,2)-0.5)*8),base-bh2,bw2,bh2,f,lot.canSize));
   } else if(lot.kind==="boxes"){
-    const n=lot.boxes.length, bwid=Math.min(120,Math.floor((sw-10)/n)-6), bhgt=Math.min(140,bwid+30);
-    const ox=(sw-(n*(bwid+6)-6))/2;
-    lot.boxes.forEach((cnt,bi)=>{
-      const x=sx+ox+bi*(bwid+6), y=base-bhgt;
-      const open=!!G.day.opened[v.place+":"+li+":"+bi];
-      drawBox(x,y,bwid,bhgt,open,cnt,item.color);
+    const n=lot.boxes.length;
+    const rows=n>3?2:1, cols=Math.ceil(n/rows);
+    let bw2=Math.min(104,Math.floor((sw-8)/cols)-6);
+    let bh2=Math.min(100,Math.round(bw2*0.95));
+    const need=bh2+(rows-1)*16;
+    if(need>availH){ const kk=availH/need; bw2=Math.max(26,Math.floor(bw2*kk)); bh2=Math.round(bh2*kk); }
+    const step=bw2+6, clusterW=(cols-1)*step+bw2, ox=(sw-clusterW)/2;
+    for(let r=rows-1;r>=0;r--){
+      for(let c=0;c<cols;c++){
+        const bi=r*cols+c; if(bi>=n) continue;
+        const x=sx+ox+c*step+(r===1?Math.round(step*0.3):0), y=base-bh2-r*16;
+        const open=!!G.day.opened[v.place+":"+li+":"+bi];
+        drawBox(x,y,bw2,bh2,open,lot.boxes[bi],item.color);
+        const cur=v.boxes[v.cursor];
+        if(cur && cur.t==="box" && cur.li===li && cur.bi===bi){
+          ro(x-5,y-20,bw2+10,bh2+26,C.mikan[300],3);
+          ctx.fillStyle=C.mikan[300]; ctx.beginPath();
+          ctx.moveTo(x+bw2/2-8,y-31); ctx.lineTo(x+bw2/2+8,y-31);
+          ctx.lineTo(x+bw2/2,y-22); ctx.closePath(); ctx.fill();
+        }
+      }
+    }
+  } else if(lot.kind==="weigh"){
+    const n=lot.cons.length;
+    let bw2=Math.min(120,Math.floor((sw-10)/n)-8);
+    let bh2=Math.min(availH-6,Math.max(34,Math.round(bw2*0.66)));
+    const step=bw2+8, ox=(sw-((n-1)*step+bw2))/2;
+    lot.cons.forEach((c,ci)=>{
+      const x=sx+ox+ci*step, y=base-bh2;
+      const held=carryIdx(v.place,li,ci)>=0;
+      if(held){ rr(x,base-6,bw2,6,"rgba(0,0,0,0.35)"); }   // 持ち出し中は すき間になる
+      else drawBowl(x,y,bw2,bh2,item.color,c.tare,false);
       const cur=v.boxes[v.cursor];
-      if(cur && cur.li===li && cur.bi===bi){
-        ro(x-5,y-22,bwid+10,bhgt+28,C.mikan[300],3);
+      if(cur && cur.t==="weigh" && cur.li===li && cur.bi===ci){
+        ro(x-5,y-20,bw2+10,bh2+26,C.mikan[300],3);
         ctx.fillStyle=C.mikan[300]; ctx.beginPath();
-        ctx.moveTo(x+bwid/2-9,y-34); ctx.lineTo(x+bwid/2+9,y-34);
-        ctx.lineTo(x+bwid/2,y-24); ctx.closePath(); ctx.fill();
+        ctx.moveTo(x+bw2/2-8,y-31); ctx.lineTo(x+bw2/2+8,y-31);
+        ctx.lineTo(x+bw2/2,y-22); ctx.closePath(); ctx.fill();
       }
     });
   } else if(lot.kind==="vats"){
-    const n=lot.vats.length, vw=Math.min(84,Math.floor((sw-30)/(n+1))), vh=70;
-    const ox=(sw-((n+1)*(vw+8)-8))/2;
-    lot.vats.forEach((f,i)=>{
-      const x=sx+ox+i*(vw+8);
-      drawVat(x,base-vh,vw,vh,f);
-      txt("1バット",x+vw/2,base+14,{size:13,color:C.sumi[500],align:"center"});
-    });
-    const px=sx+ox+n*(vw+8), ph=96;
-    drawPot(px,base-ph,vw,ph,lot.potFill);
-    txt("＝"+lot.potSize+"バット",px+vw/2,base+14,{size:13,color:C.wasabi[300],align:"center"});
+    // 寸胴は「何バット分か」に見合う大きさにする（面積が容量に比例するよう √倍）
+    const n=lot.vats.length, scale=Math.sqrt(lot.potSize);
+    let vh=Math.min(46,Math.floor((availH-4)/(scale*0.96)));
+    let vw=Math.round(vh*1.45);
+    let ph=Math.round(vh*scale*0.96), pw=Math.round(vw*scale*0.82);
+    let total=n*(vw+10)+pw;
+    if(total>sw-8){
+      const kk=(sw-8)/total;
+      vw=Math.max(16,Math.floor(vw*kk)); vh=Math.max(12,Math.floor(vh*kk));
+      pw=Math.max(20,Math.floor(pw*kk)); ph=Math.max(16,Math.floor(ph*kk));
+      total=n*(vw+10)+pw;
+    }
+    const ox=(sw-total)/2;
+    lot.vats.forEach((f,i)=>drawVat(sx+ox+i*(vw+10),base-vh,vw,vh,f));
+    drawPot(sx+ox+n*(vw+10),base-ph,pw,ph,lot.potFill,lot.potSize);
   }
+}
+const comma=v=>String(v).replace(/\B(?=(\d{3})+(?!\d))/g,",");
+function drawBowl(x,y,w,h,col,tare,onScale){
+  rr(x,y,w,h,"#b4bac4"); rr(x+4,y+4,w-8,h-8,"#676d76");
+  rr(x+6,y+Math.round(h*0.40),w-12,Math.round(h*0.52),col);     // 中身
+  rr(x+6,y+Math.round(h*0.40),w-12,3,"#ffffff88");
+  ro(x,y,w,h,"#464c55",3);
+  if(w>=72){
+    rr(x+w/2-36,y+h-16,72,13,"#efe9d8");
+    txt("風袋 "+tare+"g",x+w/2,y+h-15,{size:10,color:"#2c2c30",bold:true,align:"center"});
+  }
+  if(onScale) ro(x-5,y-5,w+10,h+10,"#6cf0a8",3);
+}
+// 位置や大きさを不ぞろいにするための、決まった値を返すゆらぎ
+const jit=(a,b)=>{ const v=Math.sin(a*12.9898+b*78.233)*43758.5453; return v-Math.floor(v); };
+// よこ方向の幅の変化を帯で積んで、丸いものをドット絵らしく描く
+function blob(x,y,w,h,col,prof){
+  const n=Math.max(5,Math.round(h/4));
+  for(let i=0;i<n;i++){
+    const t=(i+0.5)/n, ww=Math.max(2,Math.round(w*prof(t)));
+    rr(Math.round(x+(w-ww)/2), Math.round(y+h*i/n), ww, Math.ceil(h/n)+1, col);
+  }
+}
+const PROF={
+  round:  t=>Math.sqrt(Math.max(0,1-Math.pow(2*t-1,2))),
+  ellipse:t=>Math.sqrt(Math.max(0,1-Math.pow(2*t-1,2)))*0.98,
+  pepper: t=>t<0.18?0.52+t*1.6:(t<0.62?0.80+(t-0.18)*0.45:1.0-(t-0.62)*0.55),
+};
+function shade(c,k){                       // ざっくり明暗
+  const n=parseInt(c.slice(1),16);
+  const f=v=>Math.max(0,Math.min(255,Math.round(v*k)));
+  return "rgb("+f(n>>16&255)+","+f(n>>8&255)+","+f(n&255)+")";
+}
+function drawVeg(shape,x,y,w,h,col){
+  if(shape==="pepper"){
+    blob(x,y+5,w,h-5,shade(col,0.72),PROF.pepper);
+    blob(x+1,y+5,w-3,h-7,col,PROF.pepper);
+    blob(x+3,y+8,Math.round(w*0.42),Math.round((h-10)*0.7),shade(col,1.3),PROF.pepper);
+    rr(x+Math.round(w*0.42),y,Math.max(2,Math.round(w*0.16)),7,"#3f6b34");   // へた
+    rr(x+Math.round(w*0.3),y+4,Math.max(3,Math.round(w*0.4)),4,"#4a7a3c");
+  } else {
+    const prof=PROF[shape]||PROF.round;
+    blob(x,y,w,h,shade(col,0.74),prof);
+    blob(x+1,y+1,w-2,h-2,col,prof);
+    blob(x+Math.round(w*0.14),y+Math.round(h*0.14),Math.round(w*0.34),Math.round(h*0.3),shade(col,1.28),prof);
+    if(shape==="round") rr(x+Math.round(w*0.46),y,Math.max(2,Math.round(w*0.1)),4,"#4a7a3c");
+  }
+}
+function drawCarton(x,y,w,h,col){
+  rr(x,y,w,h,shade(col,0.82)); rr(x+2,y+2,w-4,h-4,col);
+  rr(x,y,w,Math.max(3,Math.round(h*0.14)),"#ffffffcc");
+  for(let i=1;i<3;i++) rr(x+Math.round(w*i/3),y+Math.round(h*0.3),1,Math.round(h*0.6),shade(col,0.8));
+  rr(x+Math.round(w*0.18),y+Math.round(h*0.45),Math.round(w*0.64),Math.round(h*0.22),"#fdfdfd");
 }
 function drawBag(x,y,w,h,col,frost){
   rr(x,y,w,h,col); rr(x,y,w,Math.max(3,h*0.12),"#ffffffcc"); ro(x,y,w,h,"#00000055",2);
@@ -863,13 +1052,65 @@ function drawVat(x,y,w,h,fill){
   const fh=Math.round((h-14)*fill);
   rr(x+5,y+h-5-fh,w-10,fh,"#a8742c"); rr(x+5,y+h-5-fh,w-10,3,"#c69244");
   ro(x,y,w,h,"#474d56",3);
+  if(w>=44){                                  // 入れ物に容量が書いてある
+    rr(x+w/2-20,y+h-16,40,12,"#e8e4d8");
+    txt("1バット",x+w/2,y+h-15,{size:10,color:"#2c2c30",bold:true,align:"center"});
+  }
 }
-function drawPot(x,y,w,h,fill){
-  rr(x-10,y+16,10,9,"#8a9098"); rr(x+w,y+16,10,9,"#8a9098");
+function drawPot(x,y,w,h,fill,size){
+  const hw=Math.max(8,Math.round(w*0.12));
+  rr(x-hw,y+Math.round(h*0.18),hw,Math.round(h*0.1),"#8a9098");
+  rr(x+w,y+Math.round(h*0.18),hw,Math.round(h*0.1),"#8a9098");
   rr(x,y,w,h,"#9aa0aa"); rr(x+5,y+7,w-10,h-12,"#3a3026");
   const fh=Math.round((h-24)*fill);
   rr(x+6,y+h-6-fh,w-12,fh,"#a8742c"); rr(x+6,y+h-6-fh,w-12,3,"#c69244");
   ro(x,y,w,h,"#5a6069",3);
+  if(size && w>=52){
+    rr(x+w/2-30,y+h-20,60,15,"#e8e4d8");
+    txt(size+"バット",x+w/2,y+h-19,{size:12,color:"#2c2c30",bold:true,align:"center"});
+  }
+}
+
+/* ---- はかりだい ---- */
+function drawWeighStation(){
+  rr(0,0,W,H,"#14171e");
+  drawFloor(0,AH,"#4e545e","#464c56","#3a3f48");
+  rr(0,0,W,H,"rgba(10,12,18,0.55)");
+  txt("はかりだい",W/2,44,{size:19,color:C.wasabi[300],bold:true,align:"center"});
+
+  const carry=G.day.carry;
+  let gross=0, tare=0;
+  carry.forEach(c=>{ const o=conOf(c); gross+=o.net+o.tare; tare+=o.tare; });
+
+  // 台に載せたもの
+  const plateY=330, bw2=120, bh2=42, gap=10;
+  const totalW=carry.length?carry.length*(bw2+gap)-gap:0, ox=(W-totalW)/2;
+  carry.forEach((c,i)=>{
+    const lot=G.day.store[c.place][c.li];
+    const item=CATALOG.find(x=>x.id===lot.itemId);
+    const o=conOf(c);
+    drawBowl(ox+i*(bw2+gap),plateY-bh2,bw2,bh2,item.color,o.tare,false);
+    txt(item.name,ox+i*(bw2+gap)+bw2/2,plateY-bh2-20,
+        {size:14,color:C.sumi[300],align:"center"});
+  });
+
+  // はかり本体
+  const w=620,h=118,x=(W-w)/2,y=plateY;
+  rr(x+16,y,w-32,12,"#c6ccd6"); ro(x+16,y,w-32,12,"#878d96",2);
+  rr(x,y+12,w,h-12,"#aeb4be"); rr(x,y+12,w,5,"#ced4de");
+  rr(x+20,y+30,96,28,"#8e949e");
+  txt("はかり",x+68,y+35,{size:15,color:"#2c3038",align:"center"});
+  rr(x+w-290,y+26,268,46,"#0d1a14"); ro(x+w-290,y+26,268,46,"#27382f",2);
+  txt(carry.length?comma(gross)+" g":"- - - - g",x+w-38,y+36,
+      {size:30,color:"#6cf0a8",bold:true,align:"right"});
+
+  if(carry.length){
+    txt("のせたもの "+carry.length+"こ　／　風袋のごうけい "+comma(tare)+"g",
+        W/2,y+h+14,{size:15,color:C.sumi[400],align:"center"});
+  }
+  const hints=[["X","もどる"]];
+  if(carry.length) hints.push(["Z","ぜんぶ おろす"]);
+  drawKeyHints(hints,H-34);
 }
 
 /* ---- パソコン ---- */
@@ -1021,6 +1262,7 @@ function frame(now){
     case "briefing": drawBriefing(); break;
     case "room":     drawRoom(); break;
     case "place":    drawPlace(); drawHUD(); break;
+    case "weighst":  drawWeighStation(); drawHUD(); break;
     case "pc":       drawPC(); break;
     case "result":   drawResult(); break;
   }
