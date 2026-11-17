@@ -15,29 +15,21 @@
   #wrap {
     min-height: 100%;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 12px; padding: 16px;
+    gap: 10px; padding: 16px;
   }
   canvas {
     width: 100%; max-width: 960px; aspect-ratio: 16 / 9;
     background: #11131c;
     border: 2px solid #2a2f40; border-radius: 4px;
-    image-rendering: pixelated;
-    outline: none;
+    image-rendering: pixelated; outline: none;
   }
-  #hint {
-    max-width: 960px; width: 100%;
-    margin: 0; font-size: 13px; line-height: 1.7; color: #6f7788;
-  }
-  #hint b { color: #9aa3b6; font-weight: 600; }
+  #hint { max-width: 960px; width: 100%; margin: 0; font-size: 13px; color: #5d6474; }
 </style>
 </head>
 <body>
 <div id="wrap">
   <canvas id="g" width="960" height="540" tabindex="0"></canvas>
-  <p id="hint">
-    <b>そうさ</b> ↑↓←→ いどう ／ Z しらべる・あける ／ X もどる ／ Enter かくてい<br>
-    画面をクリックしてからキーを押してください。数は<b>自分の目で数えて、自分で覚えて</b>ください。
-  </p>
+  <p id="hint">↑↓←→ いどう ／ Z しらべる ／ X もどる ／ Enter かくてい ／ B 音楽 ／ N 通知</p>
 </div>
 
 <script>
@@ -49,1080 +41,994 @@
 
    設計の軸:
    - 何を数えるのかは「パソコンの前」でしか分からない
-   - どこに何があるかは教えない。部屋を歩いて、自分で開けて探す
-   - 数える補助は一切ない。目で見て、自分の頭で覚えて、歩いて入力しに行く
+   - どこに何があるかは教えない。店じゅうを歩いて自分で探す
+   - 置いてあるもののほとんどは今日のカウント対象ではない（探すのが仕事）
+   - 同じ品目が2か所に分かれていることがある
+   - 遊ぶたびに、品目も数も置き場所も変わる
+   - 余計な説明はしない。察して数える
 
-   方針:
-   - 外部依存ゼロ。CDNもfetchも外部画像も使わない（file:// でも動く）
-   - 背景とオブジェクトはドット絵（アート座標を3倍して矩形で塗る）
-   - 文字はCanvasに普通のフォントでくっきり描く
+   方針: 外部依存ゼロ（CDN・fetch・外部画像・音声ファイルを一切使わない）
    ========================================================================= */
 
 /* ---------------------------------------------------------------- 基本 */
 const cv = document.getElementById("g");
 const ctx = cv.getContext("2d");
-
-const S = 3;                  // ドット1個 = 3実ピクセル
-const AW = 320, AH = 180;     // アート座標系
-const W = AW * S, H = AH * S; // 960 x 540
-
+const S = 3, AW = 320, AH = 180, W = AW * S, H = AH * S;
 const FONT = '"Hiragino Kaku Gothic ProN","Hiragino Sans","Yu Gothic",Meiryo,sans-serif';
 
-// 業務システムらしく見せるための配色
 const C = {
-  white:  "#ffffff",
-  sumi:   { 50:"#f7f7f7", 100:"#e8e8e8", 200:"#d4d4d4", 300:"#bababa",
-            400:"#a1a1a1", 500:"#868686", 600:"#6f6f6f", 700:"#585858",
-            800:"#414141", 900:"#1b1b1b" },
-  wasabi: { 50:"#f0fcfa", 300:"#82dad0", 500:"#16a595", 600:"#008f76", 700:"#006e5c" },
-  mikan:  { 50:"#fff9f0", 100:"#fff0d6", 300:"#fcc862", 400:"#f5a820", 500:"#e88c00", 700:"#a85800" },
-  tarako: { 50:"#fff4f2", 100:"#feebe8", 300:"#f9a49c", 500:"#e84040", 600:"#d02424", 700:"#ae1a1a" },
-  floorA: "#606876", floorB: "#545c6a", floorLn: "#424856",
-  wall:   "#363a4a", wallHi: "#484e60", wallLo: "#262934",
-  steel:  "#aab2be", steelHi: "#ced4de", steelLo: "#7a8290",
-  wood:   "#966c42", woodLo: "#745230",
-  uiFg:   "#ecf0f8",
+  white:"#ffffff",
+  sumi:{50:"#f7f7f7",100:"#e8e8e8",200:"#d4d4d4",300:"#bababa",400:"#a1a1a1",
+        500:"#868686",600:"#6f6f6f",700:"#585858",800:"#414141",900:"#1b1b1b"},
+  wasabi:{50:"#f0fcfa",300:"#82dad0",500:"#16a595",600:"#008f76",700:"#006e5c"},
+  mikan:{50:"#fff9f0",100:"#fff0d6",300:"#fcc862",400:"#f5a820",500:"#e88c00",700:"#a85800"},
+  tarako:{50:"#fff4f2",100:"#feebe8",300:"#f9a49c",500:"#e84040",600:"#d02424",700:"#ae1a1a"},
+  floorA:"#606876", floorB:"#545c6a", floorLn:"#424856",
+  wall:"#363a4a", wallHi:"#484e60", wallLo:"#262934",
+  steel:"#aab2be", steelHi:"#ced4de", steelLo:"#7a8290",
+  wood:"#966c42", woodLo:"#745230", uiFg:"#ecf0f8",
 };
 
-/* ---- 描画ヘルパ ---- */
-function pr(x, y, w, h, col) { // アート座標の矩形（ドット絵用）
-  ctx.fillStyle = col;
-  ctx.fillRect(Math.round(x) * S, Math.round(y) * S, Math.round(w) * S, Math.round(h) * S);
+function pr(x,y,w,h,c){ ctx.fillStyle=c; ctx.fillRect(Math.round(x)*S,Math.round(y)*S,Math.round(w)*S,Math.round(h)*S); }
+function rr(x,y,w,h,c){ ctx.fillStyle=c; ctx.fillRect(x,y,w,h); }
+function ro(x,y,w,h,c,t){ t=t||2; ctx.strokeStyle=c; ctx.lineWidth=t; ctx.strokeRect(x+t/2,y+t/2,w-t,h-t); }
+function txt(s,x,y,o){
+  o=o||{}; const size=o.size||16;
+  ctx.font=(o.bold?"bold ":"")+size+"px "+FONT;
+  ctx.textAlign=o.align||"left"; ctx.textBaseline=o.base||"top";
+  ctx.fillStyle=o.color||C.uiFg; ctx.fillText(s,x,y);
 }
-function rr(x, y, w, h, col) { ctx.fillStyle = col; ctx.fillRect(x, y, w, h); }
-function ro(x, y, w, h, col, t) {
-  t = t || 2; ctx.strokeStyle = col; ctx.lineWidth = t;
-  ctx.strokeRect(x + t / 2, y + t / 2, w - t, h - t);
-}
-function txt(s, x, y, o) {
-  o = o || {};
-  const size = o.size || 16;
-  ctx.font = (o.bold ? "bold " : "") + size + "px " + FONT;
-  ctx.textAlign = o.align || "left";
-  ctx.textBaseline = o.base || "top";
-  ctx.fillStyle = o.color || C.uiFg;
-  ctx.fillText(s, x, y);
-}
-function tw(s, size, bold) {
-  ctx.font = (bold ? "bold " : "") + (size || 16) + "px " + FONT;
-  return ctx.measureText(s).width;
-}
-function stamp(x, y, rows, pal) {
-  for (let j = 0; j < rows.length; j++) {
-    for (let i = 0; i < rows[j].length; i++) {
-      const ch = rows[j][i];
-      if (ch === ".") continue;
-      pr(x + i, y + j, 1, 1, pal[ch]);
-    }
+function tw(s,size,bold){ ctx.font=(bold?"bold ":"")+(size||16)+"px "+FONT; return ctx.measureText(s).width; }
+function stamp(x,y,rows,pal){
+  for(let j=0;j<rows.length;j++) for(let i=0;i<rows[j].length;i++){
+    const ch=rows[j][i]; if(ch!==".") pr(x+i,y+j,1,1,pal[ch]);
   }
 }
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-// 2.5 は "2.5"、5 は "5" と出す（余計な .0 を付けない）
-const num = v => (Math.round(v * 10) / 10).toString();
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const num=v=>(Math.round(v*10)/10).toString();
 
-/* ---------------------------------------------------------------- スプライト */
-const CHEF_PAL = { H:"#f8f8fc", S:"#e8ba96", K:"#20202c", M:"#c48670",
-                   C:"#f0f2f8", A:"#5c94d6", B:"#3a3e52", N:"#222430" };
-const CHEF_FRONT = [
-  "...HHHHHH...", "..HHHHHHHH..", ".HHHHHHHHHH.",
-  "..SSSSSSSS..", "..SKSSSSKS..", "..SSSSSSSS..", "...SMMMMS...",
-  "..CCCCCCCC..", ".CCCAAAACCC.", "SCCCAAAACCCS", "SCCCAAAACCCS",
-  ".CCCAAAACCC.", "..CCAAAACC..", "...BB..BB...", "...BB..BB...", "..NNN..NNN..",
-];
-const CHEF_BACK = [
-  "...HHHHHH...", "..HHHHHHHH..", ".HHHHHHHHHH.",
-  "..SSSSSSSS..", "..SSSSSSSS..", "..SSSSSSSS..", "...SSSSSS...",
-  "..CCCCCCCC..", ".CCCCCCCCCC.", "SCCCCCCCCCCS", "SCCCCCCCCCCS",
-  ".CCCCCCCCCC.", "..CCCCCCCC..", "...BB..BB...", "...BB..BB...", "..NNN..NNN..",
-];
-
-/* ---------------------------------------------------------------- セーブ */
-const SAVE_KEY = "stock-count-quest/v1";
-let storageOK = true;
-
-function todayStr(d) {
-  d = d || new Date();
-  const p = n => String(n).padStart(2, "0");
-  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
-}
-const defaultSave = () => ({ lastPlayedDate: null, streak: 0, totalCounted: 0, days: [] });
-function probeStorage() {
-  try {
-    localStorage.setItem(SAVE_KEY + "/probe", "1");
-    localStorage.removeItem(SAVE_KEY + "/probe");
-    return true;
-  } catch (e) { return false; }
-}
-function loadSave() {
-  storageOK = probeStorage();
-  if (!storageOK) return defaultSave();
-  try {
-    const raw = localStorage.getItem(SAVE_KEY);
-    return raw ? Object.assign(defaultSave(), JSON.parse(raw)) : defaultSave();
-  } catch (e) { return defaultSave(); }
-}
-function writeSave() {
-  if (!storageOK) return;
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify(G.save)); } catch (e) { storageOK = false; }
-}
-
-/* ---------------------------------------------------------------- 通知
-   起動（ページを開く）から1分後に、ブラウザ通知で催促する。
-   静的ページなので「閉じている間」は通知できない。タブを開いている間だけ届く。
-   file:// で開いた場合はブラウザが通知を許可しないことが多い。 */
-const NOTIFY_DELAY_MS = 60 * 1000;
-let notifyTimer = null, notifyAt = 0;
-
-const notifySupported = () => (typeof Notification !== "undefined");
-
-function armNotify() {
-  if (!notifySupported() || Notification.permission !== "granted") return;
-  if (notifyTimer) clearTimeout(notifyTimer);
-  notifyAt = Date.now() + NOTIFY_DELAY_MS;
-  notifyTimer = setTimeout(() => {
-    notifyTimer = null;
-    try {
-      new Notification("在庫カウントの 依頼が きています", {
-        body: "在庫カウントが必要な食材/備品が " + INGREDIENTS.length + " 件あります。",
-        tag: "stock-count-quest",
-      });
-    } catch (e) { /* 出せない環境では黙って諦める */ }
-  }, NOTIFY_DELAY_MS);
-}
-function toggleNotify() {
-  if (!notifySupported()) return;
-  if (Notification.permission === "granted") { armNotify(); return; }
-  Notification.requestPermission().then(p => { if (p === "granted") armNotify(); });
-}
-function notifyState() {
-  if (!notifySupported()) return "この環境では つかえません";
-  if (Notification.permission === "denied") return "ブラウザで ブロックされています";
-  if (Notification.permission !== "granted") return "OFF　N キーで オンにする";
-  if (notifyTimer) return "ON　あと " + Math.max(0, Math.ceil((notifyAt - Date.now()) / 1000)) + "秒で とどきます";
-  return "ON　とどきました（N キーで もういちど）";
-}
-
-/* ---------------------------------------------------------------- データ
-   place はゲーム内部の配置情報。画面には一切出さない（自分で探してもらう）。
-   theo はシステムが持っている理論在庫。わざとズレている。
-   delivery は「本日納品予定」。まだ箱のままで目には入らないが、足さないと正解にならない。
-*/
-const INGREDIENTS = [
-  { id:"pork", name:"ぶたバラ肉", unit:"袋", color:"#e8a294",
-    place:"fridge", kind:"pieces", pieces:11,
-    theo:22, delivery:2, reason:"定期カウント" },
-
-  { id:"oil", name:"サラダ油", unit:"L", color:"#ecc85e",
-    place:"fridge", kind:"liquid", canSize:4, cans:[1, 1, 0.5, 1],
-    theo:4, delivery:0, reason:"在庫がマイナス" },
-
-  { id:"wakame", name:"かんそうわかめ", unit:"袋", color:"#8fae84",
-    place:"shelf", kind:"boxes", boxes:[6, 0, 4, 3],
-    theo:13, delivery:0, reason:"初回カウント" },
-
-  { id:"dashi", name:"和風だし（仕込みずみ）", unit:"バット", color:"#b08848",
-    place:"prep", kind:"vats", vats:[1, 0.5, 1], potSize:5, potFill:0.5,
-    theo:2, delivery:0, reason:"仕掛品のため毎回" },
-
-  { id:"potato", name:"れいとうポテト", unit:"袋", color:"#e8d7a8",
-    place:"freezer", kind:"frozen", pieces:9,
-    theo:9, delivery:0, reason:"定期カウント" },
-];
-
-// 正解（＝入力すべき値）
-function expectedOf(ing) {
-  let base = 0;
-  if (ing.kind === "pieces" || ing.kind === "frozen") base = ing.pieces;
-  if (ing.kind === "liquid") base = ing.cans.reduce((a, b) => a + b, 0) * ing.canSize;
-  if (ing.kind === "boxes")  base = ing.boxes.reduce((a, b) => a + b, 0);
-  if (ing.kind === "vats")   base = ing.vats.reduce((a, b) => a + b, 0) + ing.potSize * ing.potFill;
-  return base + ing.delivery;
-}
-const byPlace = p => INGREDIENTS.filter(i => i.place === p);
-
-/* ---------------------------------------------------------------- 状態 */
-const G = { scene: "title", room: "kitchen", save: null, day: null, t: 0 };
-
-function newDay() {
-  return {
-    inputs: {}, touched: {}, confirmed: {},
-    openedBoxes: {},  // "wakame:2" -> true
-    seenList: false,  // 一度でもパソコンで依頼を見たか
-    skips: 0, walked: 0,
-    startedAt: Date.now(),
+/* ---------------------------------------------------------------- 乱数（毎回ちがう店にする） */
+function mulberry32(a){
+  return function(){
+    a|=0; a=a+0x6D2B79F5|0;
+    let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t;
+    return ((t^t>>>14)>>>0)/4294967296;
   };
 }
-const remaining = () => INGREDIENTS.filter(i => !G.day.confirmed[i.id]).length;
+let RND = mulberry32(1);
+const ri=(a,b)=>a+Math.floor(RND()*(b-a+1));          // a..b の整数
+const pick=arr=>arr[Math.floor(RND()*arr.length)];
+function shuffled(arr){
+  const a=arr.slice();
+  for(let i=a.length-1;i>0;i--){ const j=Math.floor(RND()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; }
+  return a;
+}
+
+/* ---------------------------------------------------------------- 音
+   音声ファイルは置けないので、WebAudio でその場で合成する。
+   ブラウザの制約で、最初のキー入力があるまで音は鳴らせない。 */
+let actx=null, musicGain=null, sfxGain=null;
+function audio(){
+  if(actx === false) return null;              // 一度失敗したら以後あきらめる
+  if(!actx){
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if(!AC){ actx = false; return null; }
+    try { actx = new AC(); } catch(e){ actx = false; return null; }
+    musicGain = actx.createGain(); musicGain.gain.value = 0.055; musicGain.connect(actx.destination);
+    sfxGain   = actx.createGain(); sfxGain.gain.value   = 0.16;  sfxGain.connect(actx.destination);
+  }
+  try { if(actx.state === "suspended") actx.resume(); } catch(e){}
+  return actx;
+}
+function tone(freq, dur, type, vol, delay, dest){
+  const a = audio(); if(!a) return;
+  const t0 = a.currentTime + (delay||0);
+  const o = a.createOscillator(), g = a.createGain();
+  o.type = type || "square"; o.frequency.setValueAtTime(freq, t0);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(vol || 0.3, t0 + 0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(g); g.connect(dest || sfxGain);
+  o.start(t0); o.stop(t0 + dur + 0.02);
+}
+function noise(dur, vol, delay){
+  const a = audio(); if(!a) return;
+  const n = Math.floor(a.sampleRate * dur);
+  const buf = a.createBuffer(1, n, a.sampleRate), d = buf.getChannelData(0);
+  for(let i=0;i<n;i++) d[i] = (Math.random()*2-1) * (1 - i/n);
+  const src = a.createBufferSource(); src.buffer = buf;
+  const g = a.createGain(); g.gain.value = vol || 0.2;
+  src.connect(g); g.connect(sfxGain);
+  src.start(a.currentTime + (delay||0));
+}
+const SFX = {
+  move:  () => tone(640, 0.05, "square", 0.12),
+  step:  () => tone(150, 0.04, "triangle", 0.10),
+  open:  () => { noise(0.16, 0.22); tone(180, 0.10, "triangle", 0.18); },
+  close: () => tone(130, 0.09, "triangle", 0.16),
+  door:  () => { tone(220, 0.07, "triangle", 0.18); tone(165, 0.12, "triangle", 0.16, 0.07); },
+  tick:  () => tone(880, 0.04, "square", 0.10),
+  confirm:()=> { tone(660, 0.08, "square", 0.22); tone(990, 0.12, "square", 0.20, 0.07); },
+  warn:  () => { tone(190, 0.22, "sawtooth", 0.22); tone(150, 0.26, "sawtooth", 0.20, 0.10); },
+  done:  () => [0,1,2,3].forEach(i => tone([523,659,784,1046][i], 0.18, "square", 0.22, i*0.10)),
+  notify:() => [0,1,2].forEach(i => tone([988,1319,1568][i], 0.30, "triangle", 0.30, i*0.13)),
+};
+
+/* --- BGM: 16ステップのループを合成する --- */
+const BGM = {
+  on: true, timer: null, step: 0,
+  bass: [0,0,7,0, 5,5,0,0, 3,3,10,3, 5,5,7,7],
+  lead: [12,null,15,null, 19,null,15,null, 17,null,15,null, 12,null,10,null],
+  root: 110,
+};
+function bgmStart(){
+  if(!audio() || BGM.timer) return;
+  BGM.timer = setInterval(() => {
+    if(!BGM.on) return;
+    const i = BGM.step % 16;
+    const b = BGM.bass[i];
+    if(b !== null) tone(BGM.root * Math.pow(2, b/12), 0.18, "triangle", 0.5, 0, musicGain);
+    const l = BGM.lead[i];
+    if(l !== null) tone(BGM.root * 2 * Math.pow(2, l/12), 0.14, "square", 0.22, 0, musicGain);
+    BGM.step++;
+  }, 215);
+}
+function bgmToggle(){ BGM.on = !BGM.on; if(BGM.on) bgmStart(); }
+
+/* ---------------------------------------------------------------- セーブ */
+const SAVE_KEY="stock-count-quest/v2";
+let storageOK=true;
+function todayStr(d){ d=d||new Date(); const p=n=>String(n).padStart(2,"0");
+  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate()); }
+const defaultSave=()=>({lastPlayedDate:null,streak:0,totalCounted:0,days:[]});
+function loadSave(){
+  try{ localStorage.setItem(SAVE_KEY+"/p","1"); localStorage.removeItem(SAVE_KEY+"/p"); }
+  catch(e){ storageOK=false; return defaultSave(); }
+  try{ const raw=localStorage.getItem(SAVE_KEY);
+       return raw?Object.assign(defaultSave(),JSON.parse(raw)):defaultSave(); }
+  catch(e){ return defaultSave(); }
+}
+function writeSave(){ if(!storageOK) return;
+  try{ localStorage.setItem(SAVE_KEY,JSON.stringify(G.save)); }catch(e){ storageOK=false; } }
+
+/* ---------------------------------------------------------------- 通知（起動1分後） */
+const NOTIFY_DELAY_MS = 60*1000;
+let notifyTimer=null, notifyAt=0;
+const notifySupported=()=>(typeof Notification!=="undefined");
+function armNotify(){
+  if(!notifySupported()||Notification.permission!=="granted") return;
+  if(notifyTimer) clearTimeout(notifyTimer);
+  notifyAt=Date.now()+NOTIFY_DELAY_MS;
+  notifyTimer=setTimeout(()=>{
+    notifyTimer=null;
+    SFX.notify();
+    try{ new Notification("在庫カウントが届いています",{tag:"stock-count-quest"}); }catch(e){}
+  },NOTIFY_DELAY_MS);
+}
+function toggleNotify(){
+  if(!notifySupported()) return;
+  if(Notification.permission==="granted"){ armNotify(); SFX.notify(); return; }
+  Notification.requestPermission().then(p=>{ if(p==="granted") armNotify(); });
+}
+function notifyState(){
+  if(!notifySupported()) return "つかえません";
+  if(Notification.permission==="denied") return "ブロックされています";
+  if(Notification.permission!=="granted") return "OFF";
+  if(notifyTimer) return "あと "+Math.max(0,Math.ceil((notifyAt-Date.now())/1000))+"秒";
+  return "とどきました";
+}
+
+/* ---------------------------------------------------------------- 保管場所 */
+const PLACES = {
+  fridge:   { label:"れいぞうこ",         room:"kitchen",  kinds:["pieces","liquid"] },
+  shelf:    { label:"じょうおんだな",     room:"kitchen",  kinds:["boxes","liquid"] },
+  prep:     { label:"さぎょうだい",       room:"kitchen",  kinds:["vats"] },
+  freezer:  { label:"れいとうこ",         room:"backyard", kinds:["frozen"] },
+  backshelf:{ label:"バックヤードのたな", room:"backyard", kinds:["boxes","pieces"] },
+};
+
+/* ---------------------------------------------------------------- 品目カタログ */
+const CATALOG = [
+  {id:"pork",     name:"ぶたバラ肉",     unit:"袋",    color:"#e8a294", kind:"pieces", at:["fridge"]},
+  {id:"chicken",  name:"とりもも肉",     unit:"袋",    color:"#eebba2", kind:"pieces", at:["fridge"]},
+  {id:"tofu",     name:"とうふ",         unit:"丁",    color:"#e6e2cc", kind:"pieces", at:["fridge"]},
+  {id:"egg",      name:"たまご",         unit:"パック", color:"#e9d9a8", kind:"pieces", at:["fridge"]},
+  {id:"cabbage",  name:"キャベツ",       unit:"玉",    color:"#c6dec6", kind:"pieces", at:["fridge","backshelf"]},
+  {id:"onion",    name:"たまねぎ",       unit:"ネット", color:"#d8c08a", kind:"pieces", at:["backshelf"]},
+  {id:"potato",   name:"れいとうポテト", unit:"袋",    color:"#e8d7a8", kind:"frozen", at:["freezer"]},
+  {id:"shrimp",   name:"れいとうエビ",   unit:"袋",    color:"#f0b6a6", kind:"frozen", at:["freezer"]},
+  {id:"gyoza",    name:"れいとうギョウザ",unit:"袋",   color:"#dcc9a0", kind:"frozen", at:["freezer"]},
+  {id:"oil",      name:"サラダ油",       unit:"L",     color:"#ecc85e", kind:"liquid", at:["fridge","shelf"]},
+  {id:"sake",     name:"りょうり酒",     unit:"L",     color:"#d8c98a", kind:"liquid", at:["shelf"]},
+  {id:"mirin",    name:"みりん",         unit:"L",     color:"#d8a860", kind:"liquid", at:["shelf"]},
+  {id:"wakame",   name:"かんそうわかめ", unit:"袋",    color:"#8fae84", kind:"boxes",  at:["shelf","backshelf"]},
+  {id:"chopstick",name:"わりばし",       unit:"膳",    color:"#dcc89a", kind:"boxes",  at:["backshelf","shelf"]},
+  {id:"napkin",   name:"ナプキン",       unit:"箱",    color:"#e4e4e4", kind:"boxes",  at:["backshelf"]},
+  {id:"dashi",    name:"和風だし",       unit:"バット", color:"#b08848", kind:"vats",   at:["prep"]},
+  {id:"curry",    name:"カレールー",     unit:"バット", color:"#a06030", kind:"vats",   at:["prep"]},
+  {id:"sauce",    name:"じかせいダレ",   unit:"バット", color:"#8a5c34", kind:"vats",   at:["prep"]},
+];
+
+const FILLS = [1, 1, 0.92, 0.85, 0.78, 0.7, 0.62, 0.55, 0.45, 0.38, 0.3, 0.22, 0.15, 0.08];
+
+// ひとつの保管場所に置かれた、ある品目のかたまり
+function makeLot(item){
+  const lot = { itemId:item.id, kind:item.kind };
+  if(item.kind==="pieces" || item.kind==="frozen"){
+    lot.pieces = ri(3, 11);
+  } else if(item.kind==="liquid"){
+    lot.canSize = pick([4, 4, 1.8]);
+    lot.cans = [];
+    const n = ri(2, 4);
+    for(let i=0;i<n;i++) lot.cans.push(pick(FILLS));
+  } else if(item.kind==="boxes"){
+    lot.boxes = [];
+    const n = ri(2, 4);
+    for(let i=0;i<n;i++) lot.boxes.push(RND() < 0.22 ? 0 : ri(2, 8));
+  } else if(item.kind==="vats"){
+    lot.vats = [];
+    const n = ri(2, 3);
+    for(let i=0;i<n;i++) lot.vats.push(pick(FILLS));
+    lot.potSize = pick([4, 5, 6]);
+    lot.potFill = RND() < 0.3 ? 0 : pick(FILLS);
+  }
+  return lot;
+}
+function lotAmount(lot){
+  if(lot.kind==="pieces"||lot.kind==="frozen") return lot.pieces;
+  if(lot.kind==="liquid") return lot.cans.reduce((a,b)=>a+b,0) * lot.canSize;
+  if(lot.kind==="boxes")  return lot.boxes.reduce((a,b)=>a+b,0);
+  if(lot.kind==="vats")   return lot.vats.reduce((a,b)=>a+b,0) + lot.potSize*lot.potFill;
+  return 0;
+}
+
+/* --- その日の店をつくる --- */
+function buildStore(){
+  const store = {};                 // placeId -> [lot]
+  for(const p in PLACES) store[p] = [];
+  const used = {};                  // itemId -> [placeId]
+
+  // 各保管場所に 2〜3 品目ずつ置く
+  for(const p in PLACES){
+    const kinds = PLACES[p].kinds;
+    const cand = shuffled(CATALOG.filter(i => kinds.indexOf(i.kind)>=0 && i.at.indexOf(p)>=0 && !used[i.id]));
+    const n = Math.min(cand.length, ri(2,3));
+    for(let i=0;i<n;i++){
+      const it = cand[i];
+      store[p].push(makeLot(it));
+      used[it.id] = [p];
+    }
+  }
+  // 1〜2品目は、別の場所にも分けて保管されている
+  const splitable = shuffled(Object.keys(used).filter(id=>{
+    const it = CATALOG.find(x=>x.id===id);
+    return it.at.length > 1 && it.at.some(p => used[id].indexOf(p)<0 && store[p].length < 4);
+  }));
+  for(const id of splitable.slice(0, ri(1,2))){
+    const it = CATALOG.find(x=>x.id===id);
+    const p2 = it.at.find(p => used[id].indexOf(p)<0 && store[p].length < 4);
+    if(!p2) continue;
+    store[p2].push(makeLot(it));
+    used[id].push(p2);
+  }
+  return { store, used };
+}
+
+/* --- その日のカウント依頼をつくる --- */
+const REASONS = ["定期カウント","在庫がマイナス","初回カウント","発注とのズレ"];
+function buildRequests(store, used){
+  const ids = shuffled(Object.keys(used));
+  // 2か所に分かれているものを必ず1つは混ぜる
+  const multi = ids.filter(id => used[id].length > 1);
+  const chosen = [];
+  if(multi.length) chosen.push(multi[0]);
+  for(const id of ids){ if(chosen.length>=4) break; if(chosen.indexOf(id)<0) chosen.push(id); }
+
+  const deliveryId = pick(chosen.filter(id=>{
+    const k = CATALOG.find(x=>x.id===id).kind;
+    return k==="pieces"||k==="frozen"||k==="boxes";
+  }) || []);
+
+  return chosen.map(id => {
+    const it = CATALOG.find(x=>x.id===id);
+    let base = 0;
+    for(const p of used[id]) for(const lot of store[p]) if(lot.itemId===id) base += lotAmount(lot);
+    const delivery = (id===deliveryId) ? ri(1,3) : 0;
+    const expected = Math.round((base + delivery)*10)/10;
+
+    // システムの理論在庫。たまに当たっている（＝スキップしても正解になる）
+    const r = RND();
+    let theo;
+    if(r < 0.25)      theo = Math.round(expected);
+    else if(r < 0.62) theo = Math.max(1, Math.round(expected * (1.6 + RND()*1.0)));
+    else              theo = Math.max(1, Math.round(expected * (0.22 + RND()*0.32)));
+
+    return { id, name:it.name, unit:it.unit, color:it.color, kind:it.kind,
+             places:used[id].slice(), expected, delivery, theo,
+             reason: it.kind==="vats" ? "仕掛品のため毎回" : pick(REASONS) };
+  });
+}
+
+/* ---------------------------------------------------------------- 状態 */
+const G = { scene:"title", room:"kitchen", save:null, day:null, t:0 };
+
+function newDay(){
+  RND = mulberry32((Date.now() ^ (Math.random()*1e9|0)) >>> 0);
+  const built = buildStore();
+  const reqs  = buildRequests(built.store, built.used);
+  return {
+    store: built.store, reqs,
+    inputs:{}, touched:{}, confirmed:{}, opened:{},   // opened: "place:lotIdx:boxIdx"
+    seenList:false, skips:0, walked:0, startedAt:Date.now(),
+  };
+}
+const remaining = () => G.day.reqs.filter(r => !G.day.confirmed[r.id]).length;
+const reqOf = id => G.day.reqs.find(r => r.id === id);
 
 /* ---------------------------------------------------------------- 入力 */
 const held = Object.create(null);
-const EAT = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " ", "Enter"];
+const EAT = ["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," ","Enter"];
 window.addEventListener("keydown", e => {
-  if (EAT.indexOf(e.key) >= 0) e.preventDefault();
-  if (!held[e.key]) onKey(e.key.length === 1 ? e.key.toLowerCase() : e.key);
-  held[e.key] = true;
+  if(EAT.indexOf(e.key)>=0) e.preventDefault();
+  audio(); bgmStart();                       // 最初のキー入力で音を起こす
+  if(!held[e.key]) onKey(e.key.length===1 ? e.key.toLowerCase() : e.key);
+  held[e.key]=true;
 });
-window.addEventListener("keyup", e => { held[e.key] = false; });
-cv.addEventListener("mousedown", () => cv.focus());
+window.addEventListener("keyup", e => { held[e.key]=false; });
+cv.addEventListener("mousedown", () => { cv.focus(); audio(); bgmStart(); });
 const k = n => !!held[n];
 
 /* ---------------------------------------------------------------- 部屋 */
 const FLOOR_TOP = 58, FLOOR_BOTTOM = 172;
 const ROOMS = {
-  kitchen: {
-    name: "ちゅうぼう",
-    objects: [
-      { id:"fridge", label:"れいぞうこ",     prompt:"あける",   x:18,  y:14,  w:30, h:44, zone:{x:12,  y:58,  w:42, h:20} },
-      { id:"shelf",  label:"じょうおんだな", prompt:"しらべる", x:62,  y:18,  w:62, h:40, zone:{x:58,  y:58,  w:70, h:20} },
-      { id:"door_b", label:"▶ バックヤード", prompt:"でる",     x:140, y:14,  w:26, h:44, zone:{x:134, y:58,  w:38, h:20} },
-      { id:"pc",     label:"パソコン",       prompt:"つかう",   x:236, y:24,  w:50, h:34, zone:{x:230, y:58,  w:62, h:20} },
-      { id:"prep",   label:"さぎょうだい",   prompt:"しらべる", x:108, y:106, w:80, h:24, zone:{x:104, y:130, w:88, h:20} },
-    ],
-  },
-  backyard: {
-    name: "バックヤード",
-    objects: [
-      { id:"door_k",  label:"◀ ちゅうぼう", prompt:"もどる",   x:20,  y:14, w:26, h:44, zone:{x:14,  y:58, w:38, h:20} },
-      { id:"freezer", label:"れいとうこ",   prompt:"あける",   x:96,  y:10, w:38, h:48, zone:{x:90,  y:58, w:50, h:20} },
-    ],
-  },
+  kitchen: { name:"ちゅうぼう", objects:[
+    {id:"fridge", prompt:"あける",   x:16,  y:12,  w:30, h:46, zone:{x:10, y:58, w:42, h:20}},
+    {id:"shelf",  prompt:"しらべる", x:58,  y:16,  w:58, h:42, zone:{x:54, y:58, w:66, h:20}},
+    {id:"door_b", prompt:"でる",     x:130, y:14,  w:26, h:44, zone:{x:124,y:58, w:38, h:20}, label:"▶ バックヤード"},
+    {id:"pc",     prompt:"つかう",   x:236, y:22,  w:52, h:36, zone:{x:230,y:58, w:64, h:20}, label:"パソコン"},
+    {id:"prep",   prompt:"しらべる", x:96,  y:96,  w:86, h:26, zone:{x:92, y:122,w:94, h:22}},
+  ]},
+  backyard: { name:"バックヤード", objects:[
+    {id:"door_k",   prompt:"もどる",  x:16,  y:14, w:26, h:44, zone:{x:10, y:58, w:38, h:20}, label:"◀ ちゅうぼう"},
+    {id:"freezer",  prompt:"あける",  x:76,  y:10, w:38, h:48, zone:{x:70, y:58, w:50, h:20}},
+    {id:"backshelf",prompt:"しらべる",x:146, y:16, w:70, h:42, zone:{x:142,y:58, w:78, h:20}},
+  ]},
 };
-const player = { x: 200, y: 120, dir: "up" };
+const objLabel = o => o.label || (PLACES[o.id] ? PLACES[o.id].label : o.id);
+const player = { x:200, y:124, dir:"up" };
+let stepPhase = 0;
 
-function nearObject() {
-  for (const o of ROOMS[G.room].objects) {
-    const z = o.zone;
-    if (player.x + 5 >= z.x && player.x + 5 <= z.x + z.w &&
-        player.y + 14 >= z.y - 6 && player.y + 14 <= z.y + z.h + 24) return o;
+function nearObject(){
+  for(const o of ROOMS[G.room].objects){
+    const z=o.zone;
+    if(player.x+5 >= z.x && player.x+5 <= z.x+z.w &&
+       player.y+14 >= z.y-6 && player.y+14 <= z.y+z.h+24) return o;
   }
   return null;
 }
-function updateRoom(dt) {
-  const sp = 54 * dt;
-  let dx = 0, dy = 0;
-  if (k("ArrowLeft"))  { dx -= sp; player.dir = "left"; }
-  if (k("ArrowRight")) { dx += sp; player.dir = "right"; }
-  if (k("ArrowUp"))    { dy -= sp; player.dir = "up"; }
-  if (k("ArrowDown"))  { dy += sp; player.dir = "down"; }
-  if (dx || dy) {
-    const nx = clamp(player.x + dx, 6, AW - 16);
-    const ny = clamp(player.y + dy, FLOOR_TOP + 4, FLOOR_BOTTOM - 16);
-    G.day.walked += Math.abs(nx - player.x) + Math.abs(ny - player.y);
-    player.x = nx; player.y = ny;
+function updateRoom(dt){
+  const sp = 56*dt;
+  let dx=0, dy=0;
+  if(k("ArrowLeft")){ dx-=sp; player.dir="left"; }
+  if(k("ArrowRight")){ dx+=sp; player.dir="right"; }
+  if(k("ArrowUp")){ dy-=sp; player.dir="up"; }
+  if(k("ArrowDown")){ dy+=sp; player.dir="down"; }
+  if(dx||dy){
+    const nx=clamp(player.x+dx,6,AW-16), ny=clamp(player.y+dy,FLOOR_TOP+4,FLOOR_BOTTOM-16);
+    const moved=Math.abs(nx-player.x)+Math.abs(ny-player.y);
+    G.day.walked+=moved; player.x=nx; player.y=ny;
+    stepPhase+=moved;
+    if(stepPhase>16){ stepPhase=0; SFX.step(); }
   }
+}
+
+/* ---------------------------------------------------------------- 保管場所をのぞく */
+function openPlace(placeId){
+  const boxes=[];
+  G.day.store[placeId].forEach((lot,li)=>{
+    if(lot.kind==="boxes") lot.boxes.forEach((_,bi)=>boxes.push({li,bi}));
+  });
+  G.view = { place:placeId, boxes, cursor:0 };
+  G.scene = "place";
+  SFX.open();
 }
 
 /* ---------------------------------------------------------------- パソコン */
-function openPC() {
-  for (const ing of INGREDIENTS) {
-    if (G.day.inputs[ing.id] === undefined) G.day.inputs[ing.id] = ing.theo;
-  }
-  G.day.seenList = true;   // ここで初めて「何を数えるか」が分かる
-  G.pc = { row: 0, dialog: null };
+function openPC(){
+  for(const r of G.day.reqs) if(G.day.inputs[r.id]===undefined) G.day.inputs[r.id]=r.theo;
+  G.day.seenList = true;
+  G.pc = { row:0, dialog:null };
   G.scene = "pc";
 }
-// 入力値が理論在庫から離れすぎていないかを見る。
-// 業務システムによくある「想定と違いますよ」の警告をイメージしている。
-function warnsAt(v, theo) {
-  if (v === 0 && theo > 0) return "在庫数が0になっています";
-  if (v > theo * 1.5 || v < theo / 1.6) return "想定在庫から大きく離れます";
+function warnsAt(v, theo){
+  if(v===0 && theo>0) return "在庫数が0になっています";
+  if(v > theo*1.5 || v < theo/1.6) return "想定在庫から大きく離れます";
   return null;
 }
-function confirmRow(ing) {
-  G.day.confirmed[ing.id] = true;
-  if (!G.day.touched[ing.id]) G.day.skips++; // 未編集のまま確定＝スキップ
-  if (remaining() === 0) finishDay();
+function confirmRow(r){
+  G.day.confirmed[r.id]=true;
+  if(!G.day.touched[r.id]) G.day.skips++;
+  SFX.confirm();
+  if(remaining()===0){ SFX.done(); finishDay(); }
 }
 
 /* ---------------------------------------------------------------- 結果 */
-function finishDay() {
-  let errSum = 0;
-  for (const ing of INGREDIENTS) {
-    const exp = expectedOf(ing);
-    errSum += Math.abs((G.day.inputs[ing.id] || 0) - exp) / exp;
-  }
-  const n = INGREDIENTS.length;
-  const accuracy = Math.max(0, Math.round((1 - errSum / n) * 100));
-  const skipRate = Math.round((G.day.skips / n) * 1000) / 10;
-  const seconds = Math.round((Date.now() - G.day.startedAt) / 1000);
-  const rank = (accuracy >= 95 && G.day.skips === 0) ? "S"
-             : accuracy >= 80 ? "A" : accuracy >= 55 ? "B" : "C";
+function finishDay(){
+  const rs=G.day.reqs, n=rs.length;
+  let errSum=0;
+  for(const r of rs) errSum += Math.abs((G.day.inputs[r.id]||0) - r.expected) / Math.max(0.5, r.expected);
+  const accuracy=Math.max(0,Math.round((1-errSum/n)*100));
+  const skipRate=Math.round((G.day.skips/n)*1000)/10;
+  const seconds=Math.round((Date.now()-G.day.startedAt)/1000);
+  const rank=(accuracy>=95&&G.day.skips===0)?"S":accuracy>=80?"A":accuracy>=55?"B":"C";
 
-  G.result = {
-    accuracy, skipRate, seconds, rank, items: n,
-    walked: Math.round(G.day.walked),
-    detail: INGREDIENTS.map(ing => ({
-      name: ing.name, unit: ing.unit,
-      input: G.day.inputs[ing.id] || 0, expected: expectedOf(ing),
-    })),
-  };
+  G.result={ accuracy,skipRate,seconds,rank,items:n,walked:Math.round(G.day.walked),
+    detail: rs.map(r=>({ name:r.name, unit:r.unit, input:G.day.inputs[r.id]||0,
+                         expected:r.expected, places:r.places.map(p=>PLACES[p].label) })) };
 
-  const today = todayStr();
-  const prev = G.save.lastPlayedDate;
-  if (prev !== today) {
-    const y = new Date(); y.setDate(y.getDate() - 1);
-    G.save.streak = (prev === todayStr(y)) ? G.save.streak + 1 : 1;
-  }
-  G.save.lastPlayedDate = today;
-  G.save.totalCounted += n;
-  G.save.days.unshift({ date: today, accuracy, skipRate, seconds, rank });
-  G.save.days = G.save.days.slice(0, 30);
+  const today=todayStr(), prev=G.save.lastPlayedDate;
+  if(prev!==today){ const y=new Date(); y.setDate(y.getDate()-1);
+    G.save.streak=(prev===todayStr(y))?G.save.streak+1:1; }
+  G.save.lastPlayedDate=today; G.save.totalCounted+=n;
+  G.save.days.unshift({date:today,accuracy,skipRate,seconds,rank});
+  G.save.days=G.save.days.slice(0,30);
   writeSave();
-
-  G.scene = "result";
+  G.scene="result";
 }
 
 /* =========================================================================
    キー入力
    ========================================================================= */
-function onKey(key) {
-  switch (G.scene) {
+function onKey(key){
+  if(key==="b"){ bgmToggle(); return; }
+  if(key==="n" && (G.scene==="title"||G.scene==="briefing")){ toggleNotify(); return; }
 
+  switch(G.scene){
     case "title":
-      if (key === "n") { toggleNotify(); return; }
-      if (key === "Enter" || key === "z") G.scene = "briefing";
+      if(key==="Enter"||key==="z"){ SFX.tick(); G.scene="briefing"; }
       return;
 
     case "briefing":
-      if (key === "Enter" || key === "z") {
-        G.day = newDay();
-        G.room = "kitchen";
-        player.x = 200; player.y = 120; player.dir = "up";
-        G.scene = "room";
+      if(key==="Enter"||key==="z"){
+        G.day=newDay(); G.room="kitchen";
+        player.x=200; player.y=124; player.dir="up";
+        SFX.door(); G.scene="room";
       }
       return;
 
     case "room": {
-      if (key !== "z") return;
-      const o = nearObject();
-      if (!o) return;
-      if (o.id === "door_b") { G.room = "backyard"; player.x = 40;  player.y = 110; return; }
-      if (o.id === "door_k") { G.room = "kitchen";  player.x = 150; player.y = 110; return; }
-      if (o.id === "shelf")  { G.shelf = { cursor: 0 }; G.scene = "shelf"; return; }
-      if (o.id === "pc")     { openPC(); return; }
-      G.scene = o.id;  // fridge / prep / freezer
+      if(key!=="z") return;
+      const o=nearObject(); if(!o) return;
+      if(o.id==="door_b"){ G.room="backyard"; player.x=36; player.y=112; SFX.door(); return; }
+      if(o.id==="door_k"){ G.room="kitchen";  player.x=140; player.y=112; SFX.door(); return; }
+      if(o.id==="pc"){ SFX.tick(); openPC(); return; }
+      openPlace(o.id);
       return;
     }
 
-    case "fridge": case "prep": case "freezer":
-      if (key === "x" || key === "z" || key === "Escape") G.scene = "room";
-      return;
-
-    case "shelf": {
-      const ing = byPlace("shelf")[0];
-      const s = G.shelf;
-      if (key === "x" || key === "Escape") { G.scene = "room"; return; }
-      if (key === "ArrowLeft")  s.cursor = clamp(s.cursor - 1, 0, ing.boxes.length - 1);
-      if (key === "ArrowRight") s.cursor = clamp(s.cursor + 1, 0, ing.boxes.length - 1);
-      if (key === "z") {
-        const bk = ing.id + ":" + s.cursor;
-        G.day.openedBoxes[bk] = !G.day.openedBoxes[bk];
+    case "place": {
+      const v=G.view;
+      if(key==="x"||key==="Escape"||key==="z" && v.boxes.length===0){ SFX.close(); G.scene="room"; return; }
+      if(v.boxes.length===0) return;
+      if(key==="ArrowLeft"){ v.cursor=clamp(v.cursor-1,0,v.boxes.length-1); SFX.move(); }
+      if(key==="ArrowRight"){ v.cursor=clamp(v.cursor+1,0,v.boxes.length-1); SFX.move(); }
+      if(key==="z"){
+        const b=v.boxes[v.cursor], kk=v.place+":"+b.li+":"+b.bi;
+        G.day.opened[kk]=!G.day.opened[kk];
+        G.day.opened[kk]?SFX.open():SFX.close();
       }
       return;
     }
 
     case "pc": {
-      const p = G.pc;
-      if (p.dialog) {
-        const d = p.dialog;
-        if (key === "ArrowLeft")  d.choice = 0;
-        if (key === "ArrowRight") d.choice = 1;
-        if (key === "Enter" || key === "z") {
-          if (d.choice === 0) { p.dialog = null; G.scene = "room"; } // 数えなおしに戻る
-          else { p.dialog = null; confirmRow(d.ing); }
+      const p=G.pc;
+      if(p.dialog){
+        const d=p.dialog;
+        if(key==="ArrowLeft"){ d.choice=0; SFX.move(); }
+        if(key==="ArrowRight"){ d.choice=1; SFX.move(); }
+        if(key==="Enter"||key==="z"){
+          if(d.choice===0){ p.dialog=null; SFX.close(); G.scene="room"; }
+          else { p.dialog=null; confirmRow(d.r); }
         }
         return;
       }
-      if (key === "x" || key === "Escape") { G.scene = "room"; return; }
-      if (key === "ArrowUp")   p.row = (p.row + INGREDIENTS.length - 1) % INGREDIENTS.length;
-      if (key === "ArrowDown") p.row = (p.row + 1) % INGREDIENTS.length;
+      if(key==="x"||key==="Escape"){ SFX.close(); G.scene="room"; return; }
+      const rs=G.day.reqs;
+      if(key==="ArrowUp"){ p.row=(p.row+rs.length-1)%rs.length; SFX.move(); }
+      if(key==="ArrowDown"){ p.row=(p.row+1)%rs.length; SFX.move(); }
 
-      const ing = INGREDIENTS[p.row];
-      if (key === "ArrowLeft" || key === "ArrowRight") {
-        G.day.confirmed[ing.id] = false; // 確定済みでも再編集できる
-        const step = (ing.kind === "vats") ? 0.5 : 1;   // 仕掛品だけ 0.5 刻み
-        const d = (key === "ArrowLeft") ? -step : step;
-        G.day.inputs[ing.id] = Math.max(0, Math.round(((G.day.inputs[ing.id] || 0) + d) * 10) / 10);
-        G.day.touched[ing.id] = true;
+      const r=rs[p.row];
+      if(key==="ArrowLeft"||key==="ArrowRight"){
+        G.day.confirmed[r.id]=false;
+        const step=(r.kind==="liquid"||r.kind==="vats")?0.5:1;
+        const d=(key==="ArrowLeft")?-step:step;
+        G.day.inputs[r.id]=Math.max(0,Math.round(((G.day.inputs[r.id]||0)+d)*10)/10);
+        G.day.touched[r.id]=true; SFX.tick();
       }
-      if ((key === "Enter" || key === "z") && !G.day.confirmed[ing.id]) {
-        const msg = warnsAt(G.day.inputs[ing.id], ing.theo);
-        if (msg) p.dialog = { ing, msg, choice: 0 };
-        else confirmRow(ing);
+      if((key==="Enter"||key==="z") && !G.day.confirmed[r.id]){
+        const msg=warnsAt(G.day.inputs[r.id], r.theo);
+        if(msg){ p.dialog={r,msg,choice:0}; SFX.warn(); }
+        else confirmRow(r);
       }
       return;
     }
 
     case "result":
-      if (key === "Enter" || key === "z") { armNotify(); G.scene = "title"; }
+      if(key==="Enter"||key==="z"){ armNotify(); SFX.tick(); G.scene="title"; }
       return;
   }
 }
 
 /* =========================================================================
-   描画 ― 部屋のパーツ
+   描画 ― 部屋
    ========================================================================= */
-function drawFloor(y0, y1, a, b, ln) {
-  a = a || C.floorA; b = b || C.floorB; ln = ln || C.floorLn;
-  for (let ty = Math.floor(y0 / 16) * 16; ty < y1; ty += 16) {
-    for (let tx = 0; tx < AW; tx += 16) {
-      const yy = Math.max(ty, y0);
-      pr(tx, yy, 16, Math.min(16, y1 - yy), ((tx / 16 + ty / 16) % 2 === 0) ? a : b);
+function drawFloor(y0,y1,a,b,ln){
+  a=a||C.floorA; b=b||C.floorB; ln=ln||C.floorLn;
+  for(let ty=Math.floor(y0/16)*16;ty<y1;ty+=16)
+    for(let tx=0;tx<AW;tx+=16){
+      const yy=Math.max(ty,y0);
+      pr(tx,yy,16,Math.min(16,y1-yy),((tx/16+ty/16)%2===0)?a:b);
     }
-  }
-  for (let ty = Math.ceil(y0 / 16) * 16; ty < y1; ty += 16) pr(0, ty, AW, 1, ln);
-  for (let tx = 0; tx < AW; tx += 16) pr(tx, y0, 1, y1 - y0, ln);
+  for(let ty=Math.ceil(y0/16)*16;ty<y1;ty+=16) pr(0,ty,AW,1,ln);
+  for(let tx=0;tx<AW;tx+=16) pr(tx,y0,1,y1-y0,ln);
 }
-function drawWall(y0, y1, col) {
-  col = col || C.wall;
-  pr(0, y0, AW, y1 - y0, col);
-  for (let x = 0; x < AW; x += 24) pr(x, y0, 1, y1 - y0 - 3, C.wallLo);
-  pr(0, y1 - 3, AW, 1, C.wallLo);
-  pr(0, y1 - 2, AW, 2, C.wallHi);
+function drawWall(y0,y1,col){
+  pr(0,y0,AW,y1-y0,col||C.wall);
+  for(let x=0;x<AW;x+=24) pr(x,y0,1,y1-y0-3,C.wallLo);
+  pr(0,y1-3,AW,1,C.wallLo); pr(0,y1-2,AW,2,C.wallHi);
 }
-function drawFridgeBody(x, y, w, h, cold) {
-  pr(x, y, w, h, C.steelLo);
-  pr(x + 1, y + 1, w - 2, h - 3, cold ? "#b6c6d2" : C.steel);
-  pr(x + 2, y + 2, w - 4, 2, C.steelHi);
-  pr(x, y + 16, w, 1, C.steelLo);
-  pr(x + w - 6, y + 5, 2, 8, "#464c5c");
-  pr(x + w - 6, y + 22, 2, 15, "#464c5c");
-  pr(x, y + h - 2, w, 2, "#282c3a");
+function drawFridgeBody(x,y,w,h,cold){
+  pr(x,y,w,h,C.steelLo); pr(x+1,y+1,w-2,h-3,cold?"#b6c6d2":C.steel);
+  pr(x+2,y+2,w-4,2,C.steelHi); pr(x,y+16,w,1,C.steelLo);
+  pr(x+w-6,y+5,2,8,"#464c5c"); pr(x+w-6,y+22,2,15,"#464c5c");
+  pr(x,y+h-2,w,2,"#282c3a");
 }
-function drawShelfBody(x, y, w, h) {
-  pr(x, y, w, h, C.woodLo);
-  pr(x + 1, y + 1, w - 2, h - 2, C.wood);
-  const th = Math.floor(h / 3);
-  for (let i = 1; i < 3; i++) pr(x + 1, y + i * th, w - 2, 2, C.woodLo);
-  for (let r = 0; r < 3; r++) {
-    for (let i = 0; i < 3; i++) {
-      pr(x + 4 + i * 19, y + 3 + r * th, 16, th - 5, "#b08c5e");
-      pr(x + 4 + i * 19, y + 3 + r * th, 16, 1, "#d6b488");
-    }
+function drawShelfBody(x,y,w,h){
+  pr(x,y,w,h,C.woodLo); pr(x+1,y+1,w-2,h-2,C.wood);
+  const th=Math.floor(h/3);
+  for(let i=1;i<3;i++) pr(x+1,y+i*th,w-2,2,C.woodLo);
+  for(let r=0;r<3;r++) for(let i=0;i<3;i++){
+    pr(x+4+i*((w-8)/3),y+3+r*th,(w-8)/3-3,th-5,"#b08c5e");
+    pr(x+4+i*((w-8)/3),y+3+r*th,(w-8)/3-3,1,"#d6b488");
   }
 }
-function drawDoor(x, y, w, h) {
-  pr(x, y, w, h, "#42301e");
-  pr(x + 2, y + 2, w - 4, h - 4, "#76543a");
-  pr(x + 5, y + 6, w - 10, 14, "#5a402a");
-  pr(x + 5, y + 24, w - 10, 14, "#5a402a");
-  pr(x + w - 6, y + h / 2 - 1, 3, 3, "#e8c878");
+function drawDoor(x,y,w,h){
+  pr(x,y,w,h,"#42301e"); pr(x+2,y+2,w-4,h-4,"#76543a");
+  pr(x+5,y+6,w-10,14,"#5a402a"); pr(x+5,y+24,w-10,14,"#5a402a");
+  pr(x+w-6,y+h/2-1,3,3,"#e8c878");
 }
-function drawDesk(x, y, w, h) {
-  pr(x, y + h - 12, w, 4, C.wood);
-  pr(x + 2, y + h - 8, 3, 8, C.woodLo);
-  pr(x + w - 5, y + h - 8, 3, 8, C.woodLo);
-  pr(x + 10, y, w - 20, h - 12, "#383c4c");
-  pr(x + 12, y + 2, w - 24, h - 17, "#12605c");
-  for (let i = 0; i < 3; i++) pr(x + 15, y + 5 + i * 4, 16 - i * 3, 2, C.wasabi[300]);
+function drawDesk(x,y,w,h){
+  pr(x,y+h-12,w,4,C.wood); pr(x+2,y+h-8,3,8,C.woodLo); pr(x+w-5,y+h-8,3,8,C.woodLo);
+  pr(x+10,y,w-20,h-12,"#383c4c"); pr(x+12,y+2,w-24,h-17,"#12605c");
+  for(let i=0;i<3;i++) pr(x+15,y+5+i*4,16-i*3,2,C.wasabi[300]);
 }
-function drawPrepTable(x, y, w, h) {
-  pr(x, y, w, 5, C.steelHi);
-  pr(x, y + 5, w, h - 9, C.steel);
-  pr(x + 2, y + h - 4, 4, 4, C.steelLo);
-  pr(x + w - 6, y + h - 4, 4, 4, C.steelLo);
-  for (let i = 0; i < 3; i++) {       // 載っているバット
-    pr(x + 8 + i * 24, y - 5, 18, 7, "#8c9298");
-    pr(x + 9 + i * 24, y - 4, 16, 5, "#a8742c");
-  }
-  pr(x + w - 20, y - 10, 14, 12, "#9aa0aa");  // 寸胴
-  pr(x + w - 19, y - 9, 12, 10, "#6b5230");
+function drawPrepTable(x,y,w,h){
+  pr(x,y,w,5,C.steelHi); pr(x,y+5,w,h-9,C.steel);
+  pr(x+2,y+h-4,4,4,C.steelLo); pr(x+w-6,y+h-4,4,4,C.steelLo);
+  for(let i=0;i<3;i++){ pr(x+10+i*24,y-5,18,7,"#8c9298"); pr(x+11+i*24,y-4,16,5,"#a8742c"); }
+  pr(x+w-20,y-11,15,13,"#9aa0aa"); pr(x+w-19,y-10,13,11,"#6b5230");
 }
-function drawPlayer() {
-  pr(player.x - 1, player.y + 15, 12, 2, "rgba(0,0,0,0.35)");
-  stamp(Math.round(player.x), Math.round(player.y),
-        player.dir === "up" ? CHEF_BACK : CHEF_FRONT, CHEF_PAL);
+function drawPlayer(){
+  pr(player.x-1,player.y+15,12,2,"rgba(0,0,0,0.35)");
+  stamp(Math.round(player.x),Math.round(player.y),
+        player.dir==="up"?CHEF_BACK:CHEF_FRONT,CHEF_PAL);
 }
+const CHEF_PAL={H:"#f8f8fc",S:"#e8ba96",K:"#20202c",M:"#c48670",C:"#f0f2f8",A:"#5c94d6",B:"#3a3e52",N:"#222430"};
+const CHEF_FRONT=["...HHHHHH...","..HHHHHHHH..",".HHHHHHHHHH.","..SSSSSSSS..","..SKSSSSKS..",
+  "..SSSSSSSS..","...SMMMMS...","..CCCCCCCC..",".CCCAAAACCC.","SCCCAAAACCCS","SCCCAAAACCCS",
+  ".CCCAAAACCC.","..CCAAAACC..","...BB..BB...","...BB..BB...","..NNN..NNN.."];
+const CHEF_BACK=["...HHHHHH...","..HHHHHHHH..",".HHHHHHHHHH.","..SSSSSSSS..","..SSSSSSSS..",
+  "..SSSSSSSS..","...SSSSSS...","..CCCCCCCC..",".CCCCCCCCCC.","SCCCCCCCCCCS","SCCCCCCCCCCS",
+  ".CCCCCCCCCC.","..CCCCCCCC..","...BB..BB...","...BB..BB...","..NNN..NNN.."];
 
 /* ---- 共通UI ---- */
-function drawHUD() {
-  rr(0, 0, W, 34, "#0e1018");
-  rr(0, 34, W, 2, "#000");
-  txt("のこり", 14, 9, { size: 15, color: C.sumi[400] });
-  txt(G.day.seenList ? String(remaining()) : "？", 68, 5,
-      { size: 20, color: C.mikan[300], bold: true });
-  txt("件", G.day.seenList ? 92 : 90, 9, { size: 15, color: C.sumi[400] });
-
-  const sec = Math.floor((Date.now() - G.day.startedAt) / 1000);
-  txt("じかん", 150, 9, { size: 15, color: C.sumi[400] });
-  txt(String(Math.floor(sec / 60)).padStart(2, "0") + ":" + String(sec % 60).padStart(2, "0"),
-      206, 7, { size: 17, color: C.white, bold: true });
-
-  txt("数えた数は 自分で おぼえておくこと", W - 14, 9,
-      { size: 14, color: C.sumi[500], align: "right" });
+function drawHUD(){
+  rr(0,0,W,30,"#0e1018"); rr(0,30,W,2,"#000");
+  txt("のこり",14,7,{size:15,color:C.sumi[400]});
+  txt(G.day.seenList?String(remaining()):"？",66,3,{size:20,color:C.mikan[300],bold:true});
+  txt("件",G.day.seenList?90:88,7,{size:15,color:C.sumi[400]});
+  const sec=Math.floor((Date.now()-G.day.startedAt)/1000);
+  txt("じかん",150,7,{size:15,color:C.sumi[400]});
+  txt(String(Math.floor(sec/60)).padStart(2,"0")+":"+String(sec%60).padStart(2,"0"),
+      206,5,{size:17,color:C.white,bold:true});
+  txt(BGM.on?"♪":"♪ OFF",W-14,7,{size:14,color:BGM.on?C.wasabi[300]:C.sumi[600],align:"right"});
 }
-function drawPrompt(text, cx, cy) {
-  const w = tw(text, 15, true) + 24;
-  rr(cx - w / 2, cy, w, 28, "#0c0e16");
-  ro(cx - w / 2, cy, w, 28, C.mikan[300], 2);
-  txt(text, cx, cy + 6, { size: 15, color: C.mikan[300], bold: true, align: "center" });
+function drawPrompt(text,cx,cy){
+  const w=tw(text,15,true)+24;
+  rr(cx-w/2,cy,w,28,"#0c0e16"); ro(cx-w/2,cy,w,28,C.mikan[300],2);
+  txt(text,cx,cy+6,{size:15,color:C.mikan[300],bold:true,align:"center"});
 }
-function drawMessageBox(lines, accent) {
-  const h = 30 + lines.length * 26;
-  const y = H - h - 46;
-  rr(24, y, W - 48, h, "#0c0e16");
-  ro(24, y, W - 48, h, C.white, 2);
-  ro(30, y + 6, W - 60, h - 12, "#3c4254", 2);
-  lines.forEach((s, i) =>
-    txt(s, 48, y + 18 + i * 26, { size: 17, color: (accent && i === 0) ? accent : C.uiFg }));
-}
-function drawKeyHints(items, y) {
-  let x = 20;
-  for (const [key, label] of items) {
-    const kw = tw(key, 14, true) + 16;
-    rr(x, y, kw, 22, C.sumi[100]);
-    ro(x, y, kw, 22, C.sumi[500], 2);
-    txt(key, x + kw / 2, y + 4, { size: 14, color: C.sumi[900], bold: true, align: "center" });
-    txt(label, x + kw + 8, y + 4, { size: 14, color: C.sumi[400] });
-    x += kw + 12 + tw(label, 14) + 18;
+function drawKeyHints(items,y){
+  let x=20;
+  for(const [key,label] of items){
+    const kw=tw(key,13,true)+14;
+    rr(x,y,kw,20,C.sumi[100]); ro(x,y,kw,20,C.sumi[500],2);
+    txt(key,x+kw/2,y+3,{size:13,color:C.sumi[900],bold:true,align:"center"});
+    txt(label,x+kw+7,y+3,{size:13,color:C.sumi[500]});
+    x+=kw+11+tw(label,13)+16;
   }
 }
 
-/* ---- 01 タイトル ---- */
-function drawTitle() {
-  rr(0, 0, W, H, "#10121c");
-  for (let i = 0; i < AW; i += 9) {
-    const hh = 40 + Math.round(18 * Math.sin(i * 0.11)) + ((i / 9) % 3 === 0 ? 12 : 0);
-    pr(i, AH - 62 - hh, 8, hh, "#1a1e2c");
+/* ---- タイトル ---- */
+function drawTitle(){
+  rr(0,0,W,H,"#10121c");
+  for(let i=0;i<AW;i+=9){
+    const hh=40+Math.round(18*Math.sin(i*0.11))+((i/9)%3===0?12:0);
+    pr(i,AH-62-hh,8,hh,"#1a1e2c");
   }
-  drawFloor(AH - 62, AH);
+  drawFloor(AH-62,AH);
+  txt("在庫カウント",W/2,48,{size:52,color:C.mikan[300],bold:true,align:"center"});
+  txt("クエスト",W/2,108,{size:52,color:C.mikan[400],bold:true,align:"center"});
+  txt("- STOCK COUNT QUEST -",W/2,172,{size:16,color:C.wasabi[300],align:"center"});
 
-  txt("在庫カウント", W / 2, 46, { size: 52, color: C.mikan[300], bold: true, align: "center" });
-  txt("クエスト", W / 2, 106, { size: 52, color: C.mikan[400], bold: true, align: "center" });
-  txt("- STOCK COUNT QUEST -", W / 2, 170, { size: 16, color: C.wasabi[300], align: "center" });
+  const s=G.save;
+  if(s.lastPlayedDate){
+    const last=s.days[0];
+    txt("ぜんかい "+s.lastPlayedDate+"　れんぞく "+s.streak+"日　つうさん "+s.totalCounted+"件",
+        W/2,210,{size:16,color:C.sumi[400],align:"center"});
+    if(last) txt("せいかくさ "+last.accuracy+"%　スキップりつ "+last.skipRate+"%　ランク "+last.rank,
+        W/2,234,{size:16,color:C.tarako[300],align:"center"});
+  }
+  stamp(AW/2-6,AH-92,CHEF_FRONT,CHEF_PAL);
 
-  const s = G.save;
-  if (s.lastPlayedDate) {
-    const last = s.days[0];
-    txt("ぜんかい " + s.lastPlayedDate + "　れんぞく " + s.streak + "日　つうさん " +
-        s.totalCounted + "件", W / 2, 208, { size: 16, color: C.sumi[400], align: "center" });
-    if (last) {
-      txt("せいかくさ " + last.accuracy + "%　スキップりつ " + last.skipRate + "%　ランク " + last.rank,
-          W / 2, 232, { size: 16, color: C.tarako[300], align: "center" });
+  if(Math.floor(G.t*1.6)%2===0){
+    rr(W/2-150,H-110,300,36,"#0c0e16"); ro(W/2-150,H-110,300,36,C.mikan[300],2);
+    txt("PRESS  ENTER",W/2,H-101,{size:20,color:C.white,bold:true,align:"center"});
+  }
+  txt("B 音楽 "+(BGM.on?"ON":"OFF")+"　／　N 通知 "+notifyState(),
+      W/2,H-58,{size:14,color:C.sumi[400],align:"center"});
+  if(!storageOK) txt("※ この開き方では 記録が のこせません",W/2,H-36,
+      {size:13,color:C.mikan[400],align:"center"});
+}
+
+/* ---- 出勤 ---- */
+function drawBriefing(){
+  rr(0,0,W,H,"#10121c");
+  rr(110,170,W-220,140,"#0c0e16"); ro(110,170,W-220,140,C.mikan[400],3);
+  rr(110,170,W-220,42,C.mikan[400]);
+  txt("しゅっきん",132,181,{size:19,color:C.white,bold:true});
+  txt(todayStr(),W-132,183,{size:16,color:"#ffffffcc",align:"right"});
+  txt("在庫カウントが 届いています。",W/2,250,{size:24,color:C.mikan[300],bold:true,align:"center"});
+  drawKeyHints([["Enter","はじめる"]],H-70);
+}
+
+/* ---- 部屋 ---- */
+function drawRoom(){
+  const back=(G.room==="backyard");
+  drawWall(0,FLOOR_TOP,back?"#3a3626":C.wall);
+  drawFloor(FLOOR_TOP,AH,back?"#6e6858":C.floorA,back?"#625c4e":C.floorB,back?"#4a463c":C.floorLn);
+
+  if(!back){ pr(190,8,24,18,"#2c3040"); for(let i=0;i<3;i++) pr(194+i*7,10,1,14,"#464c5c"); }
+  else {
+    for(const b of [[244,96,36,26],[244,72,36,24],[282,100,30,22]]){
+      pr(b[0],b[1],b[2],b[3],"#b0885c"); pr(b[0]+1,b[1]+1,b[2]-2,b[3]-2,"#c69c6e");
+      pr(b[0]+b[2]/2,b[1],1,b[3],"#96744c"); pr(b[0]+5,b[1]+7,b[2]-10,6,"#eee4d0");
     }
-  } else {
-    txt("はじめての 出勤です。", W / 2, 214, { size: 16, color: C.sumi[400], align: "center" });
   }
-
-  stamp(AW / 2 - 6, AH - 92, CHEF_FRONT, CHEF_PAL);
-
-  if (Math.floor(G.t * 1.6) % 2 === 0) {
-    rr(W / 2 - 150, H - 108, 300, 36, "#0c0e16");
-    ro(W / 2 - 150, H - 108, 300, 36, C.mikan[300], 2);
-    txt("PRESS  ENTER", W / 2, H - 99, { size: 20, color: C.white, bold: true, align: "center" });
-  }
-  // 仕事中の通知（起動から1分後に1回とどく）
-  const on = notifySupported() && Notification.permission === "granted";
-  txt("しごと中の 通知 … " + notifyState(), W / 2, H - 56,
-      { size: 14, color: on ? C.wasabi[300] : C.sumi[300], align: "center" });
-  if (!storageOK) {
-    txt("※ この開き方では 記録が のこせません（通知も とどきません）", W / 2, H - 34,
-        { size: 13, color: C.mikan[400], align: "center" });
-  }
-}
-
-/* ---- 02 出勤（何を数えるかは、まだ分からない） ---- */
-function drawBriefing() {
-  rr(0, 0, W, H, "#10121c");
-  rr(70, 92, W - 140, 310, "#0c0e16");
-  ro(70, 92, W - 140, 310, C.mikan[400], 3);
-  rr(70, 92, W - 140, 44, C.mikan[400]);
-  txt("しゅっきん", 92, 104, { size: 20, color: C.white, bold: true });
-  txt(todayStr(), W - 92, 106, { size: 16, color: "#ffffffcc", align: "right" });
-
-  txt("おはようございます。", 100, 166, { size: 21, color: C.uiFg });
-  txt("パソコンに 在庫カウントの 依頼が きています。", 100, 200,
-      { size: 21, color: C.mikan[300], bold: true });
-  txt("何を 数えるのかは、パソコンの 前でしか わかりません。", 100, 242,
-      { size: 17, color: C.sumi[300] });
-  txt("どこに 何が あるのかも、だれも 教えてくれません。", 100, 270,
-      { size: 17, color: C.sumi[300] });
-  txt("数える 道具も ありません。目で 見て、自分で おぼえてください。", 100, 298,
-      { size: 17, color: C.sumi[300] });
-  txt("メモは とれません。歩いて もどって、思い出して 入力します。", 100, 326,
-      { size: 17, color: C.sumi[300] });
-  txt("カウントを 片づけないと、発注に すすめません。", 100, 362,
-      { size: 16, color: C.tarako[300] });
-
-  drawKeyHints([["Enter", "しごとを はじめる"]], H - 74);
-}
-
-/* ---- 03 部屋（厨房 / バックヤード） ---- */
-function drawRoom() {
-  const back = (G.room === "backyard");
-  drawWall(0, FLOOR_TOP, back ? "#3a3626" : C.wall);
-  drawFloor(FLOOR_TOP, AH,
-            back ? "#6e6858" : C.floorA, back ? "#625c4e" : C.floorB,
-            back ? "#4a463c" : C.floorLn);
-
-  if (!back) {
-    pr(190, 8, 24, 18, "#2c3040");  // 換気扇
-    for (let i = 0; i < 3; i++) pr(194 + i * 7, 10, 1, 14, "#464c5c");
-  } else {
-    for (const [bx2, by2, bw2, bh2] of [[214,96,36,26],[214,72,36,24],[252,100,30,22]]) {
-      pr(bx2, by2, bw2, bh2, "#b0885c");                 // 未開封の段ボール
-      pr(bx2 + 1, by2 + 1, bw2 - 2, bh2 - 2, "#c69c6e");
-      pr(bx2 + bw2 / 2, by2, 1, bh2, "#96744c");
-      pr(bx2 + 5, by2 + 7, bw2 - 10, 6, "#eee4d0");
-    }
-    txt("みかいふうの なっぴん", 248 * S, 126 * S, { size: 14, color: C.mikan[300], align: "center" });
-  }
-
-  for (const o of ROOMS[G.room].objects) {
-    if (o.id === "fridge")  drawFridgeBody(o.x, o.y, o.w, o.h, false);
-    if (o.id === "freezer") drawFridgeBody(o.x, o.y, o.w, o.h, true);
-    if (o.id === "shelf")   drawShelfBody(o.x, o.y, o.w, o.h);
-    if (o.id === "pc")      drawDesk(o.x, o.y, o.w, o.h);
-    if (o.id === "prep")    drawPrepTable(o.x, o.y, o.w, o.h);
-    if (o.id.indexOf("door") === 0) drawDoor(o.x, o.y, o.w, o.h);
+  for(const o of ROOMS[G.room].objects){
+    if(o.id==="fridge")   drawFridgeBody(o.x,o.y,o.w,o.h,false);
+    if(o.id==="freezer")  drawFridgeBody(o.x,o.y,o.w,o.h,true);
+    if(o.id==="shelf"||o.id==="backshelf") drawShelfBody(o.x,o.y,o.w,o.h);
+    if(o.id==="pc")       drawDesk(o.x,o.y,o.w,o.h);
+    if(o.id==="prep")     drawPrepTable(o.x,o.y,o.w,o.h);
+    if(o.id.indexOf("door")===0) drawDoor(o.x,o.y,o.w,o.h);
   }
   drawPlayer();
-
-  // 家具の名前は出すが、中に何があるかは出さない
-  for (const o of ROOMS[G.room].objects) {
-    const isDoor = o.id.indexOf("door") === 0;
-    txt(o.label, (o.x + o.w / 2) * S, (o.y + o.h + 3) * S, {
-      size: 15, align: "center",
-      color: o.id === "pc" ? C.wasabi[300] : isDoor ? C.mikan[300] : C.sumi[300] });
+  for(const o of ROOMS[G.room].objects){
+    const isDoor=o.id.indexOf("door")===0;
+    txt(objLabel(o),(o.x+o.w/2)*S,(o.y+o.h+3)*S,
+        {size:15,align:"center",color:o.id==="pc"?C.wasabi[300]:isDoor?C.mikan[300]:C.sumi[300]});
   }
-
   drawHUD();
-  txt(ROOMS[G.room].name, W - 14, 42, { size: 15, color: C.sumi[500], align: "right" });
-
-  const o = nearObject();
-  if (o) drawPrompt("Z: " + o.prompt, (o.x + o.w / 2) * S, (o.y + o.h + 24) * S);
-
-  drawMessageBox(
-    G.day.seenList
-      ? ["たのまれた ものを さがして、目で 数えよう。",
-         "数えおわったら パソコンへ もどって 入力する。"]
-      : ["まずは パソコンで、何を 数えるのか たしかめよう。"],
-    C.mikan[300]);
-  drawKeyHints([["↑↓←→", "いどう"], ["Z", "しらべる"]], H - 40);
-}
-
-/* ---- 04 冷蔵庫の中（個数もの＋液体） ---- */
-function drawFridgeScene() {
-  rr(0, 0, W, H, "#0f1118");
-  const bx = 90, by = 80, bw = W - 180, bh = 262;
-  rr(bx - 14, by - 14, bw + 28, bh + 28, C.steelLo);
-  rr(bx - 8, by - 8, bw + 16, bh + 16, "#c2c8d2");
-  rr(bx, by, bw, bh, "#1b242e");
-  ro(bx, by, bw, bh, "#10141c", 3);
-  for (let i = 0; i < 40; i++) {
-    rr(bx + 3, by + 3 + i, bw - 6, 1, "rgba(130,190,210," + (0.10 - i * 0.0024) + ")");
-  }
-  txt("れいぞうこ の なか", W / 2, 44, { size: 19, color: C.wasabi[300], bold: true, align: "center" });
-
-  const [pork, oil] = [byPlace("fridge")[0], byPlace("fridge")[1]];
-
-  // 上の段: 液体（日本酒のような瓶。目盛りはない）
-  const shelfY1 = by + 150;
-  rr(bx + 8, shelfY1, bw - 16, 8, C.steelLo);
-  rr(bx + 8, shelfY1, bw - 16, 3, C.steelHi);
-  txt(oil.name, bx + 20, by + 8, { size: 17, color: C.sumi[300] });
-  const bwid = 56, bgap = 130;
-  const bstart = bx + (bw - ((oil.cans.length - 1) * bgap + bwid)) / 2;
-  oil.cans.forEach((fill, i) => drawBottle(bstart + i * bgap, shelfY1 - 108, bwid, 108, fill, oil.canSize));
-
-  // 下の段: 個数もの（わざと不ぞろいに置く）
-  const shelfY2 = by + bh - 18;
-  rr(bx + 8, shelfY2, bw - 16, 8, C.steelLo);
-  rr(bx + 8, shelfY2, bw - 16, 3, C.steelHi);
-  txt(pork.name, bx + 20, shelfY2 - 82, { size: 17, color: C.sumi[300] });
-  const layout = [[0,0],[52,5],[97,0],[140,8],[188,2],[233,6],[276,0],[322,7],[365,1],[411,4],[455,0]];
-  for (let i = 0; i < pork.pieces; i++) {
-    const o = layout[i % layout.length];
-    drawBag(bx + 34 + o[0], shelfY2 - 58 + o[1], 40, 58, pork.color, false);
-  }
-
-  drawMessageBox(["数える 道具は ない。目で 数えて、自分で おぼえること。"], C.mikan[300]);
-  drawKeyHints([["X", "とじる"]], H - 40);
-}
-
-/* 日本酒の瓶のような容器。目盛りは付けない。
-   濃い色のガラス越しに液面を見るので「だいたい半分…か？」としか言えない。 */
-function drawBottle(x, y, w, h, fill, size) {
-  const GLASS = "#3f3418", GLASS_D = "#2a2210", LIQ = "#9c7c28";
-  const cx = x + w / 2;
-  const neckW = Math.round(w * 0.30), neckH = Math.round(h * 0.22), shH = Math.round(h * 0.15);
-  const bodyY = y + neckH + shH, bodyH = h - neckH - shH;
-
-  rr(cx - neckW / 2 - 3, y - 11, neckW + 6, 13, "#9c2f2a");  // キャップ
-  rr(cx - neckW / 2 - 3, y - 11, neckW + 6, 3, "#c4514a");
-  rr(cx - neckW / 2, y, neckW, neckH + 2, GLASS);            // 首
-  const steps = 5;                                           // 肩
-  for (let i = 0; i < steps; i++) {
-    const ww = Math.round(neckW + (w - neckW) * ((i + 1) / steps));
-    rr(cx - ww / 2, y + neckH + Math.round(shH * i / steps), ww, Math.ceil(shH / steps) + 1, GLASS);
-  }
-  rr(x, bodyY, w, bodyH, GLASS);                             // 胴
-  const fh = Math.round((bodyH - 8) * fill);
-  rr(x + 4, bodyY + bodyH - 4 - fh, w - 8, fh, LIQ);
-  rr(x + 4, bodyY + bodyH - 4 - fh, w - 8, 2, "#b89440");    // 液面（控えめに）
-  rr(x + 5, bodyY + 4, 5, bodyH - 12, "rgba(255,245,210,0.13)");  // 照り返し
-  rr(cx + 10, bodyY + 10, 3, bodyH - 26, "rgba(255,245,210,0.07)");
-  ro(x, bodyY, w, bodyH, GLASS_D, 2);
-  // 容量ラベル。胴の上寄りに貼る（中央だと液面が隠れて判断不能になる）
-  rr(x + 7, bodyY + 5, w - 14, 22, "#efe9d8");
-  ro(x + 7, bodyY + 5, w - 14, 22, "#a89c80", 2);
-  txt(size + "L", cx, bodyY + 8, { size: 15, color: "#2c2c30", bold: true, align: "center" });
-}
-function drawBag(x, y, w, h, col, frost) {
-  rr(x, y, w, h, col);
-  rr(x, y, w, 7, "#ffffffcc");
-  ro(x, y, w, h, "#00000055", 2);
-  rr(x + 8, y + 22, w - 16, 12, "#fdfdfd");
-  if (frost) {  // 霜。輪郭がぼやけて数えにくくなる
-    rr(x, y, w, h, "rgba(226,240,248,0.42)");
-    for (let i = 0; i < 9; i++) {
-      const fx = x + ((i * 37) % (w - 6)), fy = y + ((i * 53) % (h - 6));
-      rr(fx, fy, 3, 3, "rgba(255,255,255,0.75)");
-    }
+  txt(ROOMS[G.room].name,W-14,38,{size:15,color:C.sumi[500],align:"right"});
+  const o=nearObject();
+  if(o){
+    // 床に置いてあるもの（作業台）は、下に出すとプレイヤーに重なるので上に出す
+    const py = (o.y > FLOOR_TOP) ? (o.y-16)*S : (o.y+o.h+24)*S;
+    drawPrompt("Z: "+o.prompt,(o.x+o.w/2)*S, py);
   }
 }
 
-/* ---- 05 常温だな（箱をあけないと中身が見えない） ---- */
-function drawShelfScene() {
-  const ing = byPlace("shelf")[0];
-  rr(0, 0, W, H, "#171a24");
-  const bx = 60, by = 86, bw = W - 120, bh = 230;
-  rr(bx - 10, by - 10, bw + 20, bh + 20, C.woodLo);
-  rr(bx, by, bw, bh, "#6b4e30");
-  ro(bx, by, bw, bh, "#3e2c1a", 3);
-  rr(bx + 6, by + bh - 16, bw - 12, 10, C.woodLo);
-  txt("じょうおんだな", W / 2, 44, { size: 19, color: C.mikan[300], bold: true, align: "center" });
+/* ---- 保管場所をのぞく ---- */
+function drawPlace(){
+  const v=G.view, place=PLACES[v.place], lots=G.day.store[v.place];
+  const cold=(v.place==="freezer"), warm=(v.place==="shelf"||v.place==="backshelf");
+  rr(0,0,W,H, cold?"#0d1218":warm?"#171a24":"#0f1118");
 
-  const n = ing.boxes.length, bwid = 150, gap = 26;
-  const startX = bx + (bw - (n * bwid + (n - 1) * gap)) / 2;
-  for (let i = 0; i < n; i++) {
-    const x = startX + i * (bwid + gap), y = by + 56;
-    drawBox(x, y, bwid, 146, !!G.day.openedBoxes[ing.id + ":" + i], ing.boxes[i], ing.color, ing.name);
-    if (i === G.shelf.cursor) {
-      ro(x - 6, y - 26, bwid + 12, 178, C.mikan[300], 3);
-      ctx.fillStyle = C.mikan[300];
-      ctx.beginPath();
-      ctx.moveTo(x + bwid / 2 - 10, y - 42);
-      ctx.lineTo(x + bwid / 2 + 10, y - 42);
-      ctx.lineTo(x + bwid / 2, y - 30);
-      ctx.closePath(); ctx.fill();
-    }
-  }
-  let opened = 0;
-  for (let i = 0; i < n; i++) if (G.day.openedBoxes[ing.id + ":" + i]) opened++;
-  drawMessageBox(
-    opened === 0 ? ["箱が ならんでいる。あけてみないと 中身は わからない。"]
-                 : ["あけた箱: " + opened + " / " + n + "。からっぽの 箱も ある。"],
-    C.mikan[300]);
-  drawKeyHints([["←→", "えらぶ"], ["Z", "あける／しめる"], ["X", "とじる"]], H - 40);
-}
-function drawBox(x, y, w, h, open, contents, col, name) {
-  if (!open) {
-    rr(x, y, w, h, "#b08c5e");
-    rr(x + 2, y + 2, w - 4, h - 4, "#c89c6a");
-    rr(x, y, w, 10, "#9a7a50");
-    rr(x + w / 2 - 1, y + 10, 2, h - 10, "#a8864e");
-    rr(x + 12, y + h / 2 - 15, w - 24, 30, "#eee4d0");
-    txt(name, x + w / 2, y + h / 2 - 8, { size: 13, color: "#4a4038", align: "center" });
-    txt("とじている", x + w / 2, y + h + 8, { size: 14, color: C.sumi[500], align: "center" });
+  const bx=40, by=70, bw=W-80, bh=330;
+  if(warm){
+    rr(bx-10,by-10,bw+20,bh+20,C.woodLo); rr(bx,by,bw,bh,"#6b4e30"); ro(bx,by,bw,bh,"#3e2c1a",3);
+  } else if(v.place==="prep"){
+    rr(bx,by,bw,bh,"#1c2028"); ro(bx,by,bw,bh,"#101218",3);
   } else {
-    rr(x - 8, y - 16, w / 2 + 6, 18, "#9a7a50");
-    rr(x + w / 2 + 2, y - 16, w / 2 + 6, 18, "#9a7a50");
-    rr(x, y, w, h, "#8a6a44");
-    rr(x + 6, y + 6, w - 12, h - 12, "#2e2518");
-    if (contents === 0) {
-      txt("からっぽ", x + w / 2, y + h / 2 - 10, { size: 18, color: C.sumi[500], align: "center" });
+    rr(bx-12,by-12,bw+24,bh+24,C.steelLo); rr(bx-6,by-6,bw+12,bh+12,cold?"#c8d4de":"#c2c8d2");
+    rr(bx,by,bw,bh,cold?"#18242c":"#1b242e"); ro(bx,by,bw,bh,"#0c1218",3);
+    for(let i=0;i<40;i++) rr(bx+3,by+3+i,bw-6,1,
+      "rgba("+(cold?"180,224,240":"130,190,210")+","+(0.12-i*0.0027)+")");
+  }
+  txt(place.label,W/2,40,{size:19,color:cold?"#a8d8e8":warm?C.mikan[300]:C.wasabi[300],
+      bold:true,align:"center"});
+
+  const base = by+bh-48;                 // ものを置く高さ（下にラベル用の余白をとる）
+  rr(bx+8,base,bw-16,8,warm?C.woodLo:C.steelLo);
+  const slotW = (bw-20)/Math.max(1,lots.length);
+
+  lots.forEach((lot,li)=>{
+    const sx = bx+10+li*slotW, cx = sx+slotW/2;
+    const item = CATALOG.find(i=>i.id===lot.itemId);
+    if(li>0) rr(sx,by+10,1,bh-40,"rgba(255,255,255,0.07)");
+    txt(item.name,cx,by+14,{size:16,color:C.sumi[300],align:"center"});
+    drawLot(lot,item,sx+8,slotW-16,base,li,v);
+  });
+
+  const hints=[["X","とじる"]];
+  if(v.boxes.length) hints.unshift(["←→","えらぶ"],["Z","あける"]);
+  drawKeyHints(hints,H-34);
+}
+
+function drawLot(lot,item,sx,sw,base,li,v){
+  if(lot.kind==="pieces"||lot.kind==="frozen"){
+    const n=lot.pieces, per=Math.min(5,Math.max(3,Math.ceil(n/2)));
+    const bwid=Math.min(40,Math.floor((sw-10)/per)), bhgt=Math.round(bwid*1.5);
+    const cols=Math.min(per,n), ox=(sw-(cols*(bwid+2)-2))/2;
+    for(let i=0;i<n;i++){
+      const r=Math.floor(i/per), c=i%per;
+      const jx=((i*37)%7)-3, jy=((i*53)%5)-2;
+      const x=sx+ox+c*(bwid+2)+jx+(r%2?6:0), y=base-bhgt-r*(bhgt-8)+jy;
+      drawBag(x,y,bwid,bhgt,item.color,lot.kind==="frozen");
+    }
+  } else if(lot.kind==="liquid"){
+    const n=lot.cans.length, bwid=Math.min(52,Math.floor((sw-10)/n)-6), bhgt=Math.round(bwid*1.85);
+    const ox=(sw-(n*(bwid+8)-8))/2;
+    lot.cans.forEach((f,i)=>drawBottle(sx+ox+i*(bwid+8),base-bhgt,bwid,bhgt,f,lot.canSize));
+  } else if(lot.kind==="boxes"){
+    const n=lot.boxes.length, bwid=Math.min(120,Math.floor((sw-10)/n)-6), bhgt=Math.min(140,bwid+30);
+    const ox=(sw-(n*(bwid+6)-6))/2;
+    lot.boxes.forEach((cnt,bi)=>{
+      const x=sx+ox+bi*(bwid+6), y=base-bhgt;
+      const open=!!G.day.opened[v.place+":"+li+":"+bi];
+      drawBox(x,y,bwid,bhgt,open,cnt,item.color);
+      const cur=v.boxes[v.cursor];
+      if(cur && cur.li===li && cur.bi===bi){
+        ro(x-5,y-22,bwid+10,bhgt+28,C.mikan[300],3);
+        ctx.fillStyle=C.mikan[300]; ctx.beginPath();
+        ctx.moveTo(x+bwid/2-9,y-34); ctx.lineTo(x+bwid/2+9,y-34);
+        ctx.lineTo(x+bwid/2,y-24); ctx.closePath(); ctx.fill();
+      }
+    });
+  } else if(lot.kind==="vats"){
+    const n=lot.vats.length, vw=Math.min(84,Math.floor((sw-30)/(n+1))), vh=70;
+    const ox=(sw-((n+1)*(vw+8)-8))/2;
+    lot.vats.forEach((f,i)=>{
+      const x=sx+ox+i*(vw+8);
+      drawVat(x,base-vh,vw,vh,f);
+      txt("1バット",x+vw/2,base+14,{size:13,color:C.sumi[500],align:"center"});
+    });
+    const px=sx+ox+n*(vw+8), ph=96;
+    drawPot(px,base-ph,vw,ph,lot.potFill);
+    txt("＝"+lot.potSize+"バット",px+vw/2,base+14,{size:13,color:C.wasabi[300],align:"center"});
+  }
+}
+function drawBag(x,y,w,h,col,frost){
+  rr(x,y,w,h,col); rr(x,y,w,Math.max(3,h*0.12),"#ffffffcc"); ro(x,y,w,h,"#00000055",2);
+  rr(x+w*0.2,y+h*0.42,w*0.6,h*0.2,"#fdfdfd");
+  if(frost){
+    rr(x,y,w,h,"rgba(226,240,248,0.44)");
+    for(let i=0;i<7;i++) rr(x+((i*37)%(w-4)),y+((i*53)%(h-4)),3,3,"rgba(255,255,255,0.75)");
+  }
+}
+function drawBottle(x,y,w,h,fill,size){
+  const GLASS="#3f3418",GLASS_D="#2a2210",LIQ="#9c7c28";
+  const cx=x+w/2, neckW=Math.round(w*0.30), neckH=Math.round(h*0.22), shH=Math.round(h*0.15);
+  const bodyY=y+neckH+shH, bodyH=h-neckH-shH;
+  rr(cx-neckW/2-3,y-9,neckW+6,11,"#9c2f2a"); rr(cx-neckW/2-3,y-9,neckW+6,3,"#c4514a");
+  rr(cx-neckW/2,y,neckW,neckH+2,GLASS);
+  for(let i=0;i<5;i++){
+    const ww=Math.round(neckW+(w-neckW)*((i+1)/5));
+    rr(cx-ww/2,y+neckH+Math.round(shH*i/5),ww,Math.ceil(shH/5)+1,GLASS);
+  }
+  rr(x,bodyY,w,bodyH,GLASS);
+  const fh=Math.round((bodyH-8)*fill);
+  rr(x+3,bodyY+bodyH-4-fh,w-6,fh,LIQ);
+  rr(x+3,bodyY+bodyH-4-fh,w-6,2,"#b89440");
+  rr(x+4,bodyY+4,4,bodyH-12,"rgba(255,245,210,0.13)");
+  ro(x,bodyY,w,bodyH,GLASS_D,2);
+  rr(x+5,bodyY+5,w-10,20,"#efe9d8"); ro(x+5,bodyY+5,w-10,20,"#a89c80",2);
+  txt(num(size)+"L",cx,bodyY+8,{size:13,color:"#2c2c30",bold:true,align:"center"});
+}
+function drawBox(x,y,w,h,open,contents,col){
+  if(!open){
+    rr(x,y,w,h,"#b08c5e"); rr(x+2,y+2,w-4,h-4,"#c89c6a"); rr(x,y,w,8,"#9a7a50");
+    rr(x+w/2-1,y+8,2,h-8,"#a8864e");
+    rr(x+10,y+h/2-10,w-20,20,"#eee4d0");
+  } else {
+    rr(x-6,y-13,w/2+5,15,"#9a7a50"); rr(x+w/2+1,y-13,w/2+5,15,"#9a7a50");
+    rr(x,y,w,h,"#8a6a44"); rr(x+5,y+5,w-10,h-10,"#2e2518");
+    if(contents===0){
+      txt("からっぽ",x+w/2,y+h/2-9,{size:15,color:C.sumi[500],align:"center"});
     } else {
-      for (let i = 0; i < contents; i++) {
-        const r = Math.floor(i / 3), c = i % 3;
-        const px = x + 14 + c * 42 + (r % 2 ? 7 : 0), py = y + h - 36 - r * 32;
-        rr(px, py, 36, 28, col);
-        rr(px, py, 36, 4, "#ffffffbb");
-        ro(px, py, 36, 28, "#00000055", 2);
+      const per=3, rows=Math.ceil(contents/per);
+      const bw2=Math.floor((w-18)/per);
+      const bh2=Math.max(9,Math.min(24,Math.floor((h-20)/rows)-3));
+      for(let i=0;i<contents;i++){
+        const r=Math.floor(i/per), c=i%per;
+        const px=x+9+c*bw2+(r%2?4:0), py=y+h-10-bh2-r*(bh2+3);
+        rr(px,py,bw2-3,bh2,col); rr(px,py,bw2-3,2,"#ffffffbb"); ro(px,py,bw2-3,bh2,"#00000055",2);
       }
     }
-    txt("あけた", x + w / 2, y + h + 8, { size: 14, color: C.wasabi[300], align: "center" });
   }
 }
-
-/* ---- 06 さぎょうだい（仕掛品。入れ物がちがうので換算が要る） ---- */
-function drawPrepScene() {
-  const ing = byPlace("prep")[0];
-  rr(0, 0, W, H, "#1a1d26");
-  const ty = 290, tx = 40, tw2 = W - 80, th = 62;   // 作業台の天板
-  txt("さぎょうだい", W / 2, 44, { size: 19, color: C.mikan[300], bold: true, align: "center" });
-  txt(ing.name, 40, 74, { size: 17, color: C.sumi[300] });
-
-  // バット（1枚 = 1バット）と寸胴を天板の上に並べる
-  const vw = 130, vgap = 24, pw = 120;
-  const total = ing.vats.length * vw + (ing.vats.length - 1) * vgap + 40 + pw;
-  const sx = (W - total) / 2;
-  ing.vats.forEach((fill, i) => drawVat(sx + i * (vw + vgap), ty - 90, vw, 90, fill));
-  const potX = sx + ing.vats.length * (vw + vgap) + 16;
-  drawPot(potX, ty - 120, pw, 120, ing.potFill);
-
-  // 天板はあとから描いて、手前に見えるようにする
-  rr(tx, ty, tw2, 7, "#ccd2dc");
-  rr(tx, ty + 7, tw2, th - 7, "#9aa2ae");
-  rr(tx + 8, ty + th, 12, 12, C.steelLo);
-  rr(tx + tw2 - 20, ty + th, 12, 12, C.steelLo);
-
-  // ラベルは天板の上に黒文字で（下に敷くと読めない）
-  ing.vats.forEach((_, i) =>
-    txt("1バット", sx + i * (vw + vgap) + vw / 2, ty + 18,
-        { size: 15, color: "#2e343c", align: "center" }));
-  txt("ずんどう", potX + pw / 2, ty + 14, { size: 15, color: "#2e343c", align: "center" });
-  txt("いっぱいで " + ing.potSize + "バットぶん", potX + pw / 2, ty + 34,
-      { size: 14, color: C.wasabi[700], bold: true, align: "center" });
-
-  drawMessageBox(
-    ["いれものが ちがう。『なんバットぶん』に なおして 入力する。",
-     "バットは 1まい = 1バット。ずんどうは おおきい。"],
-    C.mikan[300]);
-  drawKeyHints([["X", "とじる"]], H - 40);
+function drawVat(x,y,w,h,fill){
+  rr(x,y,w,h,"#aab0ba"); rr(x+4,y+4,w-8,h-8,"#5c626c");
+  const fh=Math.round((h-14)*fill);
+  rr(x+5,y+h-5-fh,w-10,fh,"#a8742c"); rr(x+5,y+h-5-fh,w-10,3,"#c69244");
+  ro(x,y,w,h,"#474d56",3);
 }
-function drawVat(x, y, w, h, fill) {
-  rr(x, y, w, h, "#aab0ba");
-  rr(x + 5, y + 5, w - 10, h - 10, "#5c626c");
-  const fh = Math.round((h - 16) * fill);
-  rr(x + 6, y + h - 6 - fh, w - 12, fh, "#a8742c");
-  rr(x + 6, y + h - 6 - fh, w - 12, 3, "#c69244");
-  ro(x, y, w, h, "#474d56", 3);
-}
-function drawPot(x, y, w, h, fill) {
-  rr(x - 12, y + 18, 12, 10, "#8a9098");   // とって
-  rr(x + w, y + 18, 12, 10, "#8a9098");
-  rr(x, y, w, h, "#9aa0aa");
-  rr(x + 6, y + 8, w - 12, h - 14, "#3a3026");
-  const fh = Math.round((h - 26) * fill);
-  rr(x + 7, y + h - 7 - fh, w - 14, fh, "#a8742c");
-  rr(x + 7, y + h - 7 - fh, w - 14, 3, "#c69244");
-  ro(x, y, w, h, "#5a6069", 3);
+function drawPot(x,y,w,h,fill){
+  rr(x-10,y+16,10,9,"#8a9098"); rr(x+w,y+16,10,9,"#8a9098");
+  rr(x,y,w,h,"#9aa0aa"); rr(x+5,y+7,w-10,h-12,"#3a3026");
+  const fh=Math.round((h-24)*fill);
+  rr(x+6,y+h-6-fh,w-12,fh,"#a8742c"); rr(x+6,y+h-6-fh,w-12,3,"#c69244");
+  ro(x,y,w,h,"#5a6069",3);
 }
 
-/* ---- 07 れいとうこ（霜で見づらい） ---- */
-function drawFreezerScene() {
-  const ing = byPlace("freezer")[0];
-  rr(0, 0, W, H, "#0d1218");
-  const bx = 100, by = 80, bw = W - 200, bh = 250;
-  rr(bx - 14, by - 14, bw + 28, bh + 28, C.steelLo);
-  rr(bx - 8, by - 8, bw + 16, bh + 16, "#c8d4de");
-  rr(bx, by, bw, bh, "#18242c");
-  ro(bx, by, bw, bh, "#0c1218", 3);
-  for (let i = 0; i < 46; i++) {
-    rr(bx + 3, by + 3 + i, bw - 6, 1, "rgba(180,224,240," + (0.13 - i * 0.0028) + ")");
+/* ---- パソコン ---- */
+function drawPC(){
+  const rs=G.day.reqs;
+  rr(0,0,W,H,"#242838");
+  const mx=24,my=14,mw=W-48,mh=H-58;
+  rr(mx-8,my-8,mw+16,mh+16,"#3e4252"); rr(mx-4,my-4,mw+8,mh+8,"#181a22"); rr(mx,my,mw,mh,C.sumi[50]);
+
+  rr(mx,my,mw,56,C.white);
+  txt("在庫 ＞ カウント依頼",mx+16,my+8,{size:14,color:C.sumi[500]});
+  txt("在庫カウント  ドット亭",mx+16,my+25,{size:23,color:C.sumi[900],bold:true});
+  txt("推定在庫 計算時刻",mx+mw-320,my+10,{size:13,color:C.sumi[500]});
+  txt("9:30",mx+mw-320,my+28,{size:16,color:C.sumi[900],bold:true});
+  txt("売上 連携時刻",mx+mw-170,my+10,{size:13,color:C.sumi[500]});
+  txt("8:00",mx+mw-170,my+28,{size:16,color:C.sumi[900],bold:true});
+  rr(mx,my+56,mw,2,C.sumi[200]);
+
+  const ny=my+64, done=remaining()===0;
+  rr(mx+12,ny,mw-24,44,done?C.wasabi[50]:C.mikan[50]);
+  ro(mx+12,ny,mw-24,44,done?C.wasabi[500]:C.mikan[300],2);
+  if(done) txt("お疲れさまでした！ 発注に すすめます。",mx+32,ny+12,
+      {size:17,color:C.wasabi[700],bold:true});
+  else {
+    txt("在庫カウントが必要な食材/備品が "+remaining()+" 件あります。",mx+32,ny+4,
+        {size:17,color:C.mikan[700],bold:true});
+    txt("現在の在庫数を確認し、本日の納品を含めた在庫数を入力してください。",mx+32,ny+25,
+        {size:14,color:C.sumi[700]});
   }
-  txt("れいとうこ の なか", W / 2, 44, { size: 19, color: "#a8d8e8", bold: true, align: "center" });
-  txt(ing.name, bx + 20, by + 10, { size: 17, color: C.sumi[300] });
 
-  const shelfY = by + bh - 20;
-  rr(bx + 8, shelfY, bw - 16, 8, C.steelLo);
-  const layout = [[0,0],[46,6],[88,1],[132,8],[176,2],[219,7],[262,0],[306,5],[348,2]];
-  for (let i = 0; i < ing.pieces; i++) {
-    const o = layout[i % layout.length];
-    drawBag(bx + 28 + o[0], shelfY - 62 + o[1], 42, 62, ing.color, true);
-  }
-  // 庫内の白い冷気
-  rr(bx + 3, by + 3, bw - 6, bh - 6, "rgba(210,236,248,0.10)");
+  let ry=ny+58;
+  rs.forEach((r,i)=>{
+    const v=G.day.inputs[r.id]||0, conf=!!G.day.confirmed[r.id];
+    const warn=!conf&&warnsAt(v,r.theo), cur=(G.pc.row===i);
+    const rh=warn?66:50;
+    rr(mx+12,ry,mw-24,rh,warn?C.tarako[50]:conf?C.wasabi[50]:C.white);
+    if(cur) ro(mx+12,ry,mw-24,rh,C.mikan[400],3);
+    else if(warn) ro(mx+12,ry,mw-24,rh,C.tarako[500],2);
+    else rr(mx+12,ry+rh-2,mw-24,2,C.sumi[100]);
 
-  drawMessageBox(["霜で まっ白。ふくろの さかいめが わかりにくい。"], "#a8d8e8");
-  drawKeyHints([["X", "とじる"]], H - 40);
-}
+    rr(mx+22,ry+9,30,30,r.color); ro(mx+22,ry+9,30,30,C.sumi[300],2);
+    txt(r.name,mx+62,ry+(r.delivery?6:14),{size:17,color:C.sumi[900],bold:true});
+    if(r.delivery) txt("本日"+r.delivery+r.unit+" 納品予定",mx+62,ry+28,
+        {size:13,color:C.wasabi[600]});
+    txt("理由: "+r.reason,mx+320,ry+16,{size:13,color:C.sumi[500]});
 
-/* ---- 08 パソコン（ここでしか依頼は見られない） ---- */
-function drawPC() {
-  rr(0, 0, W, H, "#242838");
-  const mx = 24, my = 14, mw = W - 48, mh = H - 62;
-  rr(mx - 8, my - 8, mw + 16, mh + 16, "#3e4252");
-  rr(mx - 4, my - 4, mw + 8, mh + 8, "#181a22");
-  rr(mx, my, mw, mh, C.sumi[50]);
+    const stx=mx+mw-300,stw=160;
+    rr(stx,ry+10,stw,30,C.white);
+    ro(stx,ry+10,stw,30,warn?C.tarako[500]:cur?C.mikan[400]:C.sumi[300],2);
+    rr(stx+2,ry+12,28,26,C.sumi[50]);
+    txt("−",stx+16,ry+15,{size:17,color:C.sumi[700],bold:true,align:"center"});
+    rr(stx+stw-30,ry+12,28,26,C.sumi[50]);
+    txt("＋",stx+stw-16,ry+15,{size:17,color:C.sumi[700],bold:true,align:"center"});
+    txt(num(v)+r.unit,stx+stw-38,ry+15,{size:17,color:C.sumi[900],bold:true,align:"right"});
 
-  rr(mx, my, mw, 58, C.white);
-  txt("在庫 ＞ カウント依頼", mx + 16, my + 8, { size: 14, color: C.sumi[500] });
-  txt("在庫カウント  ドット亭", mx + 16, my + 26, { size: 23, color: C.sumi[900], bold: true });
-  txt("推定在庫 計算時刻", mx + mw - 320, my + 10, { size: 13, color: C.sumi[500] });
-  txt("9:30", mx + mw - 320, my + 28, { size: 16, color: C.sumi[900], bold: true });
-  txt("売上 連携時刻", mx + mw - 170, my + 10, { size: 13, color: C.sumi[500] });
-  txt("8:00", mx + mw - 170, my + 28, { size: 16, color: C.sumi[900], bold: true });
-  rr(mx, my + 58, mw, 2, C.sumi[200]);
-
-  const ny = my + 66, done = remaining() === 0;
-  rr(mx + 12, ny, mw - 24, 46, done ? C.wasabi[50] : C.mikan[50]);
-  ro(mx + 12, ny, mw - 24, 46, done ? C.wasabi[500] : C.mikan[300], 2);
-  if (done) {
-    txt("お疲れさまでした！ 発注に すすめます。", mx + 32, ny + 13,
-        { size: 17, color: C.wasabi[700], bold: true });
-  } else {
-    txt("在庫カウントが必要な食材/備品が " + remaining() + " 件あります。",
-        mx + 32, ny + 5, { size: 17, color: C.mikan[700], bold: true });
-    txt("現在の在庫数を確認し、本日の納品を含めた在庫数を入力してください。",
-        mx + 32, ny + 26, { size: 14, color: C.sumi[700] });
-  }
-  txt("残り", mx + 14, ny + 56, { size: 15, color: C.sumi[900], bold: true });
-  txt(String(remaining()), mx + 46, ny + 50, { size: 21, color: C.wasabi[600], bold: true });
-  txt("件", mx + 68, ny + 56, { size: 15, color: C.sumi[900], bold: true });
-
-  let ry = ny + 80;
-  INGREDIENTS.forEach((ing, i) => {
-    const v = G.day.inputs[ing.id] || 0;
-    const conf = !!G.day.confirmed[ing.id];
-    const warn = !conf && warnsAt(v, ing.theo);
-    const cur = (G.pc.row === i);
-    const rh = warn ? 64 : 48;
-
-    rr(mx + 12, ry, mw - 24, rh, warn ? C.tarako[50] : conf ? C.wasabi[50] : C.white);
-    if (cur) ro(mx + 12, ry, mw - 24, rh, C.mikan[400], 3);
-    else if (warn) ro(mx + 12, ry, mw - 24, rh, C.tarako[500], 2);
-    else rr(mx + 12, ry + rh - 2, mw - 24, 2, C.sumi[100]);
-
-    rr(mx + 22, ry + 8, 30, 30, ing.color);
-    ro(mx + 22, ry + 8, 30, 30, C.sumi[300], 2);
-    txt(ing.name, mx + 62, ry + (ing.delivery ? 5 : 13), { size: 17, color: C.sumi[900], bold: true });
-    if (ing.delivery) {
-      txt("本日" + ing.delivery + ing.unit + " 納品予定", mx + 62, ry + 27,
-          { size: 13, color: C.wasabi[600] });
+    const bx2=mx+mw-126;
+    if(conf) txt("✓ 確定済み",bx2,ry+15,{size:15,color:C.wasabi[600],bold:true});
+    else {
+      rr(bx2,ry+10,100,30,C.wasabi[500]); ro(bx2,ry+10,100,30,C.wasabi[700],2);
+      txt("在庫確定",bx2+50,ry+16,{size:15,color:C.white,bold:true,align:"center"});
     }
-    txt("理由: " + ing.reason, mx + 330, ry + 15, { size: 13, color: C.sumi[500] });
-
-    const stx = mx + mw - 300, stw = 160;
-    rr(stx, ry + 9, stw, 30, C.white);
-    ro(stx, ry + 9, stw, 30, warn ? C.tarako[500] : cur ? C.mikan[400] : C.sumi[300], 2);
-    rr(stx + 2, ry + 11, 28, 26, C.sumi[50]);
-    txt("−", stx + 16, ry + 14, { size: 17, color: C.sumi[700], bold: true, align: "center" });
-    rr(stx + stw - 30, ry + 11, 28, 26, C.sumi[50]);
-    txt("＋", stx + stw - 16, ry + 14, { size: 17, color: C.sumi[700], bold: true, align: "center" });
-    txt(num(v) + ing.unit, stx + stw - 38, ry + 14,
-        { size: 17, color: C.sumi[900], bold: true, align: "right" });
-
-    const bx2 = mx + mw - 126;
-    if (conf) {
-      txt("✓ 確定済み", bx2, ry + 14, { size: 15, color: C.wasabi[600], bold: true });
-    } else {
-      rr(bx2, ry + 9, 100, 30, C.wasabi[500]);
-      ro(bx2, ry + 9, 100, 30, C.wasabi[700], 2);
-      txt("在庫確定", bx2 + 50, ry + 15, { size: 15, color: C.white, bold: true, align: "center" });
-    }
-    if (warn) {
-      txt("⚠ " + warn, mx + mw - 34, ry + 42,
-          { size: 14, color: C.tarako[600], bold: true, align: "right" });
-    }
-    ry += rh + 3;
+    if(warn) txt("⚠ "+warn,mx+mw-34,ry+44,
+        {size:14,color:C.tarako[600],bold:true,align:"right"});
+    ry+=rh+3;
   });
 
-  rr(0, H - 40, W, 40, "#0e1018");
-  txt("メモは とれない", 16, H - 30, { size: 15, color: C.sumi[600] });
-  txt("↑↓ 行 ／ ←→ すうじ ／ Enter 在庫確定 ／ X せきを はなれる", W - 16, H - 30,
-      { size: 15, color: C.sumi[400], align: "right" });
-
-  if (G.pc.dialog) drawWarningDialog();
+  rr(0,H-36,W,36,"#0e1018");
+  txt("↑↓ 行 ／ ←→ すうじ ／ Enter 在庫確定 ／ X せきを はなれる",W-16,H-27,
+      {size:15,color:C.sumi[400],align:"right"});
+  if(G.pc.dialog) drawWarningDialog();
 }
-function drawWarningDialog() {
-  const d = G.pc.dialog;
-  rr(0, 0, W, H, "rgba(0,0,0,0.55)");
-  const dw = 640, dh = 272, dx = (W - dw) / 2, dy = 126;
-  rr(dx, dy, dw, dh, C.white);
-  ro(dx, dy, dw, dh, C.tarako[500], 4);
-  rr(dx, dy, dw, 44, C.tarako[500]);
-  txt("⚠  けいこく", dx + 18, dy + 12, { size: 20, color: C.white, bold: true });
-
-  txt(d.msg, dx + 28, dy + 68, { size: 23, color: C.tarako[600], bold: true });
-  txt(d.ing.name + "　システム想定 " + num(d.ing.theo) + d.ing.unit +
-      "　→　入力 " + num(G.day.inputs[d.ing.id]) + d.ing.unit,
-      dx + 28, dy + 108, { size: 17, color: C.sumi[900] });
-  txt("ほんとうに その かず で あっていますか？", dx + 28, dy + 134, { size: 16, color: C.sumi[700] });
-
-  ["数えなおす", "このまま確定"].forEach((label, i) => {
-    const bw2 = 200, bx = dx + 28 + i * (bw2 + 20), by = dy + 176, on = (d.choice === i);
-    rr(bx, by, bw2, 44, i === 0 ? C.sumi[100] : C.tarako[500]);
-    ro(bx, by, bw2, 44, on ? C.sumi[900] : (i === 0 ? C.sumi[400] : C.tarako[700]), on ? 4 : 2);
-    txt(label, bx + bw2 / 2, by + 12,
-        { size: 17, bold: true, align: "center", color: i === 0 ? C.sumi[900] : C.white });
+function drawWarningDialog(){
+  const d=G.pc.dialog;
+  rr(0,0,W,H,"rgba(0,0,0,0.55)");
+  const dw=640,dh=268,dx=(W-dw)/2,dy=130;
+  rr(dx,dy,dw,dh,C.white); ro(dx,dy,dw,dh,C.tarako[500],4); rr(dx,dy,dw,44,C.tarako[500]);
+  txt("⚠  けいこく",dx+18,dy+12,{size:20,color:C.white,bold:true});
+  txt(d.msg,dx+28,dy+68,{size:23,color:C.tarako[600],bold:true});
+  txt(d.r.name+"　システム想定 "+num(d.r.theo)+d.r.unit+"　→　入力 "+num(G.day.inputs[d.r.id])+d.r.unit,
+      dx+28,dy+108,{size:17,color:C.sumi[900]});
+  txt("ほんとうに その かず で あっていますか？",dx+28,dy+134,{size:16,color:C.sumi[700]});
+  ["数えなおす","このまま確定"].forEach((label,i)=>{
+    const bw2=200,bx=dx+28+i*(bw2+20),by=dy+176,on=(d.choice===i);
+    rr(bx,by,bw2,44,i===0?C.sumi[100]:C.tarako[500]);
+    ro(bx,by,bw2,44,on?C.sumi[900]:(i===0?C.sumi[400]:C.tarako[700]),on?4:2);
+    txt(label,bx+bw2/2,by+12,{size:17,bold:true,align:"center",color:i===0?C.sumi[900]:C.white});
   });
-  txt("※ 数えなおすと、また 歩いて 見にいくことになる", dx + 28, dy + 234,
-      { size: 14, color: C.mikan[500] });
+  txt("※ 数えなおすと、また 歩いて 見にいくことになる",dx+28,dy+232,
+      {size:14,color:C.mikan[500]});
 }
 
-/* ---- 09 リザルト ---- */
-function drawResult() {
-  const r = G.result;
-  rr(0, 0, W, H, "#12141e");
-  for (let i = 0; i < W; i += 24) rr(i, 0, 12, H, "#141724");
+/* ---- リザルト ---- */
+function drawResult(){
+  const r=G.result;
+  rr(0,0,W,H,"#12141e");
+  for(let i=0;i<W;i+=24) rr(i,0,12,H,"#141724");
+  rr(0,0,W,48,"#0c0e16");
+  txt("しゅうぎょう！",W/2,11,{size:24,color:C.mikan[300],bold:true,align:"center"});
 
-  rr(0, 0, W, 50, "#0c0e16");
-  txt("しゅうぎょう！", W / 2, 12, { size: 24, color: C.mikan[300], bold: true, align: "center" });
-
-  const px = 40, py = 66;
-  txt("こたえあわせ", px, py, { size: 15, color: C.sumi[500] });
-  r.detail.forEach((d, i) => {
-    const y = py + 26 + i * 28;
-    const ok = (d.input === d.expected);
-    txt(d.name, px, y, { size: 16, color: C.sumi[300] });
-    txt("入力 " + num(d.input) + d.unit, px + 220, y, { size: 16, color: C.white, bold: true });
-    txt("正解 " + num(d.expected) + d.unit, px + 350, y,
-        { size: 16, color: ok ? C.wasabi[300] : C.tarako[300], bold: true });
-    txt(ok ? "ぴったり" : (d.input > d.expected ? "多い" : "足りない"), px + 480, y,
-        { size: 15, color: ok ? C.wasabi[300] : C.mikan[300] });
+  const px=40,py=64;
+  txt("こたえあわせ",px,py,{size:15,color:C.sumi[500]});
+  r.detail.forEach((d,i)=>{
+    const y=py+26+i*32;
+    const diff=Math.abs(d.input-d.expected);
+    const ok=diff<0.01, near=!ok && diff/Math.max(0.5,d.expected)<=0.05;
+    txt(d.name,px,y,{size:16,color:C.sumi[300]});
+    txt(d.places.join("・"),px,y+16,{size:12,color:C.sumi[600]});
+    txt("入力 "+num(d.input)+d.unit,px+210,y+4,{size:16,color:C.white,bold:true});
+    txt("正解 "+num(d.expected)+d.unit,px+340,y+4,
+        {size:16,color:ok?C.wasabi[300]:C.tarako[300],bold:true});
+    txt(ok?"ぴったり":near?"ほぼ合ってる":(d.input>d.expected?"多い":"足りない"),px+480,y+4,
+        {size:15,color:ok||near?C.wasabi[300]:C.mikan[300]});
   });
 
-  const qx = 620;
-  [["せいかくさ", r.accuracy + " %", r.accuracy >= 80 ? C.wasabi[300] : C.mikan[300]],
-   ["スキップりつ", r.skipRate + " %", r.skipRate > 0 ? C.tarako[300] : C.wasabi[300]],
-   ["しょようじかん", Math.floor(r.seconds / 60) + "分" + (r.seconds % 60) + "秒", C.white],
-   ["あるいた きょり", r.walked + " ドット", C.sumi[400]],
-  ].forEach((row, i) => {
-    const y = py + 26 + i * 28;
-    txt(row[0], qx, y, { size: 15, color: C.sumi[500] });
-    txt(row[1], W - 40, y - 2, { size: 18, color: row[2], bold: true, align: "right" });
+  const qx=630;
+  [["せいかくさ",r.accuracy+" %",r.accuracy>=80?C.wasabi[300]:C.mikan[300]],
+   ["スキップりつ",r.skipRate+" %",r.skipRate>0?C.tarako[300]:C.wasabi[300]],
+   ["しょようじかん",Math.floor(r.seconds/60)+"分"+(r.seconds%60)+"秒",C.white],
+   ["あるいた きょり",r.walked+" ドット",C.sumi[400]],
+  ].forEach((row,i)=>{
+    const y=py+26+i*32;
+    txt(row[0],qx,y+4,{size:15,color:C.sumi[500]});
+    txt(row[1],W-40,y+2,{size:18,color:row[2],bold:true,align:"right"});
   });
 
-  const by = 228;
-  rr(40, by, W - 80, 44, "#1c1414");
-  ro(40, by, W - 80, 44, C.tarako[500], 2);
-  txt("ランク", 60, by + 13, { size: 15, color: C.sumi[400] });
-  txt(r.rank, 120, by + 7, { size: 25, color: C.tarako[300], bold: true });
-  txt(r.rank === "S" ? "「完璧。ただし誰も見ていない」"
-    : r.rank === "A" ? "「よく数えた」"
-    : r.rank === "B" ? "「まあ発注はできる」"
-    : "「とりあえず 発注は できる」", 160, by + 13, { size: 17, color: C.sumi[300] });
+  const by=py+26+r.detail.length*32+14;
+  rr(40,by,W-80,44,"#1c1414"); ro(40,by,W-80,44,C.tarako[500],2);
+  txt("ランク",60,by+13,{size:15,color:C.sumi[400]});
+  txt(r.rank,120,by+7,{size:25,color:C.tarako[300],bold:true});
+  txt(r.rank==="S"?"「完璧。ただし誰も見ていない」":r.rank==="A"?"「よく数えた」"
+     :r.rank==="B"?"「まあ発注はできる」":"「とりあえず 発注は できる」",
+     160,by+13,{size:17,color:C.sumi[300]});
 
-  txt("あしたも " + INGREDIENTS.length + "件 きます。", W / 2, 296,
-      { size: 20, color: C.mikan[300], bold: true, align: "center" });
-  txt("— これが 毎日 おきている —", W / 2, 328, { size: 16, color: C.sumi[500], align: "center" });
-
-  if (storageOK) {
-    txt("きろくしました（れんぞく " + G.save.streak + "日）", W / 2, 372,
-        { size: 15, color: C.wasabi[300], align: "center" });
-  }
-  drawKeyHints([["Enter", "タイトルへ"]], H - 40);
+  txt("あしたも きます。",W/2,by+70,{size:20,color:C.mikan[300],bold:true,align:"center"});
+  txt("— これが 毎日 おきている —",W/2,by+100,{size:16,color:C.sumi[500],align:"center"});
+  drawKeyHints([["Enter","タイトルへ"]],H-34);
 }
 
 /* =========================================================================
    メインループ
    ========================================================================= */
-let prev = performance.now();
-function frame(now) {
-  const dt = Math.min(0.05, (now - prev) / 1000);
-  prev = now; G.t += dt;
-
-  if (G.scene === "room") updateRoom(dt);
-
-  ctx.clearRect(0, 0, W, H);
-  switch (G.scene) {
+let prev=performance.now();
+function frame(now){
+  const dt=Math.min(0.05,(now-prev)/1000); prev=now; G.t+=dt;
+  if(G.scene==="room") updateRoom(dt);
+  ctx.clearRect(0,0,W,H);
+  switch(G.scene){
     case "title":    drawTitle(); break;
     case "briefing": drawBriefing(); break;
     case "room":     drawRoom(); break;
-    case "fridge":   drawFridgeScene();  drawHUD(); break;
-    case "shelf":    drawShelfScene();   drawHUD(); break;
-    case "prep":     drawPrepScene();    drawHUD(); break;
-    case "freezer":  drawFreezerScene(); drawHUD(); break;
+    case "place":    drawPlace(); drawHUD(); break;
     case "pc":       drawPC(); break;
     case "result":   drawResult(); break;
   }
   requestAnimationFrame(frame);
 }
 
-G.save = loadSave();
-armNotify();   // すでに許可ずみなら、起動1分後の通知をここで仕込む
+G.save=loadSave();
+armNotify();
 cv.focus();
 requestAnimationFrame(frame);
 </script>
