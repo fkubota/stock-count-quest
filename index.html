@@ -239,7 +239,7 @@ function nearObject() {
   for (const o of ROOM.objects) {
     const z = o.zone;
     if (player.x + 5 >= z.x && player.x + 5 <= z.x + z.w &&
-        player.y + 14 >= z.y && player.y + 14 <= z.y + z.h + 10) return o;
+        player.y + 14 >= z.y && player.y + 14 <= z.y + z.h + 30) return o;
   }
   return null;
 }
@@ -601,7 +601,7 @@ function drawKitchen() {
 function drawFridgeScene() {
   rr(0, 0, W, H, "#0f1118");
 
-  const bx = 90, by = 86, bw = W - 180, bh = 250;
+  const bx = 90, by = 80, bw = W - 180, bh = 262;
   rr(bx - 14, by - 14, bw + 28, bh + 28, C.steelLo);
   rr(bx - 8, by - 8, bw + 16, bh + 16, "#c2c8d2");
   rr(bx, by, bw, bh, "#1b242e");
@@ -614,22 +614,24 @@ function drawFridgeScene() {
   const oil  = INGREDIENTS.find(i => i.id === "oil");
   const pork = INGREDIENTS.find(i => i.id === "pork");
 
-  // --- 上の段: 液体。容量が書かれた容器が並ぶ。中身はバラバラ ---
-  const shelfY1 = by + 136;
+  // --- 上の段: 液体。日本酒のような瓶。目盛りはない ---
+  const shelfY1 = by + 150;
   rr(bx + 8, shelfY1, bw - 16, 8, C.steelLo);
   rr(bx + 8, shelfY1, bw - 16, 3, C.steelHi);
-  txt(oil.name, bx + 20, by + 12, { size: 17, color: C.sumi[300] });
+  txt(oil.name, bx + 20, by + 8, { size: 17, color: C.sumi[300] });
+  const bwid = 56, bgap = 130;
+  const bstart = bx + (bw - ((oil.cans.length - 1) * bgap + bwid)) / 2;
   oil.cans.forEach((fill, i) => {
-    drawCan(bx + 60 + i * 130, shelfY1 - 104, 76, 104, fill, oil.canSize);
+    drawBottle(bstart + i * bgap, shelfY1 - 108, bwid, 108, fill, oil.canSize);
   });
 
   // --- 下の段: 個数もの。わざと不ぞろいに置く ---
-  const shelfY2 = by + bh - 20;
+  const shelfY2 = by + bh - 18;
   rr(bx + 8, shelfY2, bw - 16, 8, C.steelLo);
   rr(bx + 8, shelfY2, bw - 16, 3, C.steelHi);
   txt(pork.name, bx + 20, shelfY2 - 82, { size: 17, color: C.sumi[300] });
-  const layout = [ // [横のずれ, 縦のずれ] 目視での数えにくさを作る
-    [0,0],[44,4],[82,0],[118,7],[158,2],[196,5],[232,0],[270,6],[306,1],[344,4],[382,0]];
+  const layout = [ // [横のずれ, 縦のずれ] わざと不ぞろいにして、目視で数えにくくする
+    [0,0],[52,5],[97,0],[140,8],[188,2],[233,6],[276,0],[322,7],[365,1],[411,4],[455,0]];
   for (let i = 0; i < pork.pieces; i++) {
     const o = layout[i % layout.length];
     drawBag(bx + 34 + o[0], shelfY2 - 58 + o[1], 40, 58, pork.color);
@@ -638,19 +640,49 @@ function drawFridgeScene() {
   drawMessageBox(["数える 道具は ない。目で 数えて、自分で おぼえること。"], C.mikan[300]);
   drawKeyHints([["X", "とじる"]], H - 40);
 }
-function drawCan(x, y, w, h, fill, size) {
-  rr(x + w / 2 - 12, y - 10, 24, 10, "#848c9c");       // キャップ
-  rr(x, y, w, h, "#b6bcc6");
-  rr(x + 3, y + 3, w - 6, h - 6, "#98a0ac");
-  const fh = Math.round((h - 12) * fill);
-  rr(x + 6, y + h - 6 - fh, w - 12, fh, "#ecc85e");    // 中身
-  rr(x + 6, y + h - 6 - fh, w - 12, 3, "#fae2a0");
-  ro(x, y, w, h, "#5e646e", 3);
-  for (let i = 1; i < 4; i++) rr(x + w - 13, y + 8 + (h - 16) * i / 4, 8, 2, "#6e747e");
-  // 容量ラベル（容器そのものに書いてある）
-  rr(x + 10, y + 14, w - 20, 26, "#f4f2ea");
-  ro(x + 10, y + 14, w - 20, 26, "#9aa0a8", 2);
-  txt(size + "L", x + w / 2, y + 19, { size: 17, color: "#2c2c30", bold: true, align: "center" });
+/* 日本酒の瓶のような容器。
+   目盛りは付けない。濃い色のガラス越しに液面を見るので、
+   「だいたい半分…か？」としか言えないようにしてある。 */
+function drawBottle(x, y, w, h, fill, size) {
+  const GLASS   = "#3f3418";   // 瓶のガラス（濃い飴色）
+  const GLASS_D = "#2a2210";   // 影
+  const LIQ     = "#9c7c28";   // 中身（ガラス越しなので沈んだ色）
+  const cx = x + w / 2;
+  const neckW = Math.round(w * 0.30);
+  const neckH = Math.round(h * 0.22);
+  const shH   = Math.round(h * 0.15);
+  const bodyY = y + neckH + shH;
+  const bodyH = h - neckH - shH;
+
+  // キャップと首
+  rr(cx - neckW / 2 - 3, y - 11, neckW + 6, 13, "#9c2f2a");
+  rr(cx - neckW / 2 - 3, y - 11, neckW + 6, 3, "#c4514a");
+  rr(cx - neckW / 2, y, neckW, neckH + 2, GLASS);
+
+  // 肩（段差で絞る＝ドット絵らしく）
+  const steps = 5;
+  for (let i = 0; i < steps; i++) {
+    const ww = Math.round(neckW + (w - neckW) * ((i + 1) / steps));
+    rr(cx - ww / 2, y + neckH + Math.round(shH * i / steps), ww, Math.ceil(shH / steps) + 1, GLASS);
+  }
+
+  // 胴と中身（液面は胴の中だけ）
+  rr(x, bodyY, w, bodyH, GLASS);
+  const fh = Math.round((bodyH - 8) * fill);
+  rr(x + 4, bodyY + bodyH - 4 - fh, w - 8, fh, LIQ);
+  // 液面の線はごく控えめに。はっきり読めてしまうと意味がない
+  rr(x + 4, bodyY + bodyH - 4 - fh, w - 8, 2, "#b89440");
+
+  // ガラスの照り返し（これも液面を読みにくくする）
+  rr(x + 5, bodyY + 4, 5, bodyH - 12, "rgba(255,245,210,0.13)");
+  rr(cx + 10, bodyY + 10, 3, bodyH - 26, "rgba(255,245,210,0.07)");
+  ro(x, bodyY, w, bodyH, GLASS_D, 2);
+
+  // 容量ラベル（瓶に貼ってある。中身がいくら残っているかはどこにも書かれていない）
+  // 胴の上寄りに貼る。真ん中に貼ると液面が隠れて判断できなくなるため。
+  rr(x + 7, bodyY + 5, w - 14, 22, "#efe9d8");
+  ro(x + 7, bodyY + 5, w - 14, 22, "#a89c80", 2);
+  txt(size + "L", cx, bodyY + 8, { size: 15, color: "#2c2c30", bold: true, align: "center" });
 }
 function drawBag(x, y, w, h, col) {
   rr(x, y, w, h, col);
@@ -819,7 +851,7 @@ function drawPC() {
 function drawWarningDialog() {
   const d = G.pc.dialog;
   rr(0, 0, W, H, "rgba(0,0,0,0.55)");
-  const dw = 640, dh = 250, dx = (W - dw) / 2, dy = 130;
+  const dw = 640, dh = 272, dx = (W - dw) / 2, dy = 126;
   rr(dx, dy, dw, dh, C.white);
   ro(dx, dy, dw, dh, C.tarako[500], 4);
   rr(dx, dy, dw, 44, C.tarako[500]);
@@ -838,7 +870,7 @@ function drawWarningDialog() {
     txt(label, bx + bw2 / 2, by + 12,
         { size: 17, bold: true, align: "center", color: i === 0 ? C.sumi[900] : C.white });
   });
-  txt("※ 数えなおすと、また 歩いて 見にいくことになる", dx + 462, dy + 188,
+  txt("※ 数えなおすと、また 歩いて 見にいくことになる", dx + 28, dy + 234,
       { size: 14, color: C.mikan[500] });
 }
 
