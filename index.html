@@ -29,7 +29,7 @@
 <body>
 <div id="wrap">
   <canvas id="g" width="960" height="540" tabindex="0"></canvas>
-  <p id="hint">↑↓←→ いどう ／ Z しらべる ／ X もどる ／ Enter かくてい ／ B 音楽 ／ N 通知</p>
+  <p id="hint">↑↓←→ いどう ／ Z しらべる ／ X もどる ／ Enter かくてい ／ B 音</p>
 </div>
 
 <script>
@@ -108,6 +108,7 @@ function shuffled(arr){
    音声ファイルは置けないので、WebAudio でその場で合成する。
    ブラウザの制約で、最初のキー入力があるまで音は鳴らせない。 */
 let actx=null, musicGain=null, sfxGain=null;
+let soundOn=true;          // B キーで 音楽も効果音もまとめて切る
 function audio(){
   if(actx === false) return null;              // 一度失敗したら以後あきらめる
   if(!actx){
@@ -121,6 +122,7 @@ function audio(){
   return actx;
 }
 function tone(freq, dur, type, vol, delay, dest){
+  if(!soundOn) return;
   const a = audio(); if(!a) return;
   const t0 = a.currentTime + (delay||0);
   const o = a.createOscillator(), g = a.createGain();
@@ -132,6 +134,7 @@ function tone(freq, dur, type, vol, delay, dest){
   o.start(t0); o.stop(t0 + dur + 0.02);
 }
 function noise(dur, vol, delay){
+  if(!soundOn) return;
   const a = audio(); if(!a) return;
   const n = Math.floor(a.sampleRate * dur);
   const buf = a.createBuffer(1, n, a.sampleRate), d = buf.getChannelData(0);
@@ -151,12 +154,11 @@ const SFX = {
   confirm:()=> { tone(660, 0.08, "square", 0.22); tone(990, 0.12, "square", 0.20, 0.07); },
   warn:  () => { tone(190, 0.22, "sawtooth", 0.22); tone(150, 0.26, "sawtooth", 0.20, 0.10); },
   done:  () => [0,1,2,3].forEach(i => tone([523,659,784,1046][i], 0.18, "square", 0.22, i*0.10)),
-  notify:() => [0,1,2].forEach(i => tone([988,1319,1568][i], 0.30, "triangle", 0.30, i*0.13)),
 };
 
 /* --- BGM: 16ステップのループを合成する --- */
 const BGM = {
-  on: true, timer: null, step: 0,
+  timer: null, step: 0,
   bass: [0,0,7,0, 5,5,0,0, 3,3,10,3, 5,5,7,7],
   lead: [12,null,15,null, 19,null,15,null, 17,null,15,null, 12,null,10,null],
   root: 110,
@@ -164,7 +166,7 @@ const BGM = {
 function bgmStart(){
   if(!audio() || BGM.timer) return;
   BGM.timer = setInterval(() => {
-    if(!BGM.on) return;
+    if(!soundOn) return;
     const i = BGM.step % 16;
     const b = BGM.bass[i];
     if(b !== null) tone(BGM.root * Math.pow(2, b/12), 0.18, "triangle", 0.5, 0, musicGain);
@@ -173,7 +175,7 @@ function bgmStart(){
     BGM.step++;
   }, 215);
 }
-function bgmToggle(){ BGM.on = !BGM.on; if(BGM.on) bgmStart(); }
+function soundToggle(){ soundOn = !soundOn; if(soundOn) bgmStart(); }
 
 /* ---------------------------------------------------------------- セーブ */
 const SAVE_KEY="stock-count-quest/v2";
@@ -190,33 +192,6 @@ function loadSave(){
 }
 function writeSave(){ if(!storageOK) return;
   try{ localStorage.setItem(SAVE_KEY,JSON.stringify(G.save)); }catch(e){ storageOK=false; } }
-
-/* ---------------------------------------------------------------- 通知（起動1分後） */
-const NOTIFY_DELAY_MS = 60*1000;
-let notifyTimer=null, notifyAt=0;
-const notifySupported=()=>(typeof Notification!=="undefined");
-function armNotify(){
-  if(!notifySupported()||Notification.permission!=="granted") return;
-  if(notifyTimer) clearTimeout(notifyTimer);
-  notifyAt=Date.now()+NOTIFY_DELAY_MS;
-  notifyTimer=setTimeout(()=>{
-    notifyTimer=null;
-    SFX.notify();
-    try{ new Notification("在庫カウントが届いています",{tag:"stock-count-quest"}); }catch(e){}
-  },NOTIFY_DELAY_MS);
-}
-function toggleNotify(){
-  if(!notifySupported()) return;
-  if(Notification.permission==="granted"){ armNotify(); SFX.notify(); return; }
-  Notification.requestPermission().then(p=>{ if(p==="granted") armNotify(); });
-}
-function notifyState(){
-  if(!notifySupported()) return "つかえません";
-  if(Notification.permission==="denied") return "ブロックされています";
-  if(Notification.permission!=="granted") return "OFF";
-  if(notifyTimer) return "あと "+Math.max(0,Math.ceil((notifyAt-Date.now())/1000))+"秒";
-  return "とどきました";
-}
 
 /* ---------------------------------------------------------------- 保管場所 */
 const PLACES = {
@@ -579,8 +554,7 @@ function finishDay(){
    キー入力
    ========================================================================= */
 function onKey(key){
-  if(key==="b"){ bgmToggle(); return; }
-  if(key==="n" && (G.scene==="title"||G.scene==="briefing")){ toggleNotify(); return; }
+  if(key==="b"){ soundToggle(); return; }
 
   switch(G.scene){
     case "title":
@@ -674,7 +648,7 @@ function onKey(key){
     }
 
     case "result":
-      if(key==="Enter"||key==="z"){ armNotify(); SFX.tick(); G.scene="title"; }
+      if(key==="Enter"||key==="z"){ SFX.tick(); G.scene="title"; }
       return;
   }
 }
@@ -760,7 +734,7 @@ function drawHUD(){
       206,5,{size:17,color:C.white,bold:true});
   if(G.day.carry.length) txt("もっている "+carryUsed()+"/"+CARRY_MAX,W-50,7,
       {size:14,color:C.mikan[300],align:"right"});
-  txt(BGM.on?"♪":"♪ OFF",W-14,7,{size:14,color:BGM.on?C.wasabi[300]:C.sumi[600],align:"right"});
+  txt(soundOn?"♪":"♪ OFF",W-14,7,{size:14,color:soundOn?C.wasabi[300]:C.sumi[600],align:"right"});
 }
 function drawPrompt(text,cx,cy){
   const w=tw(text,15,true)+24;
@@ -804,8 +778,7 @@ function drawTitle(){
     rr(W/2-150,H-110,300,36,"#0c0e16"); ro(W/2-150,H-110,300,36,C.mikan[300],2);
     txt("PRESS  ENTER",W/2,H-101,{size:20,color:C.white,bold:true,align:"center"});
   }
-  txt("B 音楽 "+(BGM.on?"ON":"OFF")+"　／　N 通知 "+notifyState(),
-      W/2,H-58,{size:14,color:C.sumi[400],align:"center"});
+  txt("B キーで 音の オン・オフ",W/2,H-58,{size:14,color:C.sumi[400],align:"center"});
   if(!storageOK) txt("※ この開き方では 記録が のこせません",W/2,H-36,
       {size:13,color:C.mikan[400],align:"center"});
 }
@@ -980,21 +953,17 @@ function drawLot(lot,item,sx,sw,base,li,v,availH){
     lot.cans.forEach((f,i)=>drawBottle(sx+ox+i*step+Math.round((jit(li+i,2)-0.5)*8),base-bh2,bw2,bh2,f,lot.canSize));
     mark(v,"look:"+li+":0",sx+ox-8,base-bh2-14,(n-1)*step+bw2+16,bh2+18);
   } else if(lot.kind==="boxes"){
+    // 箱は大きいので重ねない。かならず一列に並べる
     const n=lot.boxes.length;
-    const rows=n>3?2:1, cols=Math.ceil(n/rows);
-    let bw2=Math.min(104,Math.floor((sw-8)/cols)-6);
-    let bh2=Math.min(100,Math.round(bw2*0.95));
-    const need=bh2+(rows-1)*16;
-    if(need>availH){ const kk=availH/need; bw2=Math.max(26,Math.floor(bw2*kk)); bh2=Math.round(bh2*kk); }
-    const step=bw2+6, clusterW=(cols-1)*step+bw2, ox=(sw-clusterW)/2;
-    for(let r=rows-1;r>=0;r--){
-      for(let c=0;c<cols;c++){
-        const bi=r*cols+c; if(bi>=n) continue;
-        const x=sx+ox+c*step+(r===1?Math.round(step*0.3):0), y=base-bh2-r*16;
-        const open=!!G.day.opened[v.place+":"+li+":"+bi];
-        drawBox(x,y,bw2,bh2,open,lot.boxes[bi],item.color);
-        mark(v,"box:"+li+":"+bi,x,y,bw2,bh2);
-      }
+    let bw2=Math.min(110,Math.floor((sw-8)/n)-8);
+    let bh2=Math.min(availH-6,Math.round(bw2*0.92));
+    if(bw2<30){ bw2=Math.max(26,Math.floor((sw-8)/n)-4); bh2=Math.min(availH-6,Math.round(bw2*0.92)); }
+    const step=bw2+8, clusterW=(n-1)*step+bw2, ox=(sw-clusterW)/2;
+    for(let bi=0;bi<n;bi++){
+      const x=sx+ox+bi*step, y=base-bh2;
+      const open=!!G.day.opened[v.place+":"+li+":"+bi];
+      drawBox(x,y,bw2,bh2,open,lot.boxes[bi],item.color);
+      mark(v,"box:"+li+":"+bi,x,y,bw2,bh2);
     }
   } else if(lot.kind==="weigh"){
     const n=lot.cons.length;
@@ -1388,7 +1357,6 @@ function frame(now){
 }
 
 G.save=loadSave();
-armNotify();
 cv.focus();
 requestAnimationFrame(frame);
 </script>
