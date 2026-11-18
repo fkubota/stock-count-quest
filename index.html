@@ -222,7 +222,7 @@ function notifyState(){
 const PLACES = {
   fridge:   { label:"れいぞうこ",         room:"kitchen",  kinds:["pieces","liquid","pile","weigh"] },
   shelf:    { label:"じょうおんだな",     room:"kitchen",  kinds:["boxes","liquid"] },
-  prep:     { label:"さぎょうだい",       room:"kitchen",  kinds:["vats","weigh"] },
+  prep:     { label:"さぎょうだい",       room:"kitchen",  kinds:["weigh"] },
   freezer:  { label:"れいとうこ",         room:"backyard", kinds:["frozen"] },
   backshelf:{ label:"バックヤードのたな", room:"backyard", kinds:["boxes","pieces","pile"] },
 };
@@ -247,19 +247,31 @@ const CATALOG = [
   {id:"wakame",   name:"かんそうわかめ", unit:"袋",    color:"#8fae84", kind:"boxes",  at:["shelf","backshelf"]},
   {id:"chopstick",name:"わりばし",       unit:"膳",    color:"#dcc89a", kind:"boxes",  at:["backshelf","shelf"]},
   {id:"napkin",   name:"ナプキン",       unit:"箱",    color:"#e4e4e4", kind:"boxes",  at:["backshelf"]},
-  {id:"dashi",    name:"和風だし",       unit:"バット", color:"#b08848", kind:"vats",   at:["prep"]},
-  {id:"demi",     name:"デミグラス",     unit:"バット", color:"#a06030", kind:"vats",   at:["prep"]},
-  {id:"sauce",    name:"じかせいダレ",   unit:"バット", color:"#8a5c34", kind:"vats",   at:["prep"]},
-  {id:"currypot", name:"カレー",         unit:"バット", color:"#b8701c", kind:"vats",   at:["prep"]},
-  {id:"rice",     name:"たきあがりライス",unit:"バット",color:"#eee6d2", kind:"vats",   at:["prep"]},
-  {id:"soup",     name:"スープ",         unit:"バット", color:"#c8a858", kind:"vats",   at:["prep"]},
-  {id:"meat",     name:"ミートソース",   unit:"g",     color:"#a8402c", kind:"weigh",  at:["fridge","prep"]},
-  {id:"white",    name:"ホワイトソース", unit:"g",     color:"#dcd4bc", kind:"weigh",  at:["fridge","prep"]},
-  {id:"tane",     name:"ハンバーグのタネ",unit:"g",    color:"#b07a58", kind:"weigh",  at:["fridge","prep"]},
-  {id:"tartar",   name:"タルタルソース", unit:"g",     color:"#ece2bc", kind:"weigh",  at:["fridge","prep"]},
+  {id:"dashi",    name:"和風だし",       unit:"g", color:"#b08848", kind:"weigh", vessel:"pot", at:["prep"]},
+  {id:"demi",     name:"デミグラス",     unit:"g", color:"#a06030", kind:"weigh", vessel:"pot", at:["prep"]},
+  {id:"sauce",    name:"じかせいダレ",   unit:"g", color:"#8a5c34", kind:"weigh", vessel:"pot", at:["prep"]},
+  {id:"currypot", name:"カレー",         unit:"g", color:"#b8701c", kind:"weigh", vessel:"pot", at:["prep"]},
+  {id:"rice",     name:"たきあがりライス",unit:"g",color:"#e6dcc0", kind:"weigh", vessel:"pot", at:["prep"]},
+  {id:"soup",     name:"スープ",         unit:"g", color:"#c8a858", kind:"weigh", vessel:"pot", at:["prep"]},
+  {id:"meat",     name:"ミートソース",   unit:"g",     color:"#a8402c", kind:"weigh", vessel:"tupper", at:["fridge","prep"]},
+  {id:"white",    name:"ホワイトソース", unit:"g",     color:"#dcd4bc", kind:"weigh", vessel:"tupper", at:["fridge","prep"]},
+  {id:"tane",     name:"ハンバーグのタネ",unit:"g",    color:"#b07a58", kind:"weigh", vessel:"tupper", at:["fridge","prep"]},
+  {id:"tartar",   name:"タルタルソース", unit:"g",     color:"#ece2bc", kind:"weigh", vessel:"tupper", at:["fridge","prep"]},
 ];
 
 const FILLS = [1, 1, 0.92, 0.85, 0.78, 0.7, 0.62, 0.55, 0.45, 0.38, 0.3, 0.22, 0.15, 0.08];
+const PART  = [0.88, 0.8, 0.72, 0.64, 0.55, 0.46, 0.38, 0.3, 0.22, 0.14];   // 使いかけ
+// 入れ物: 容量(g) と 空のときの重さ(g)
+const VESSEL = {
+  tupper:{ cap:[800,1400,2000],     tare:[180,320,460],      slots:1 },
+  vat:   { cap:[1600,2400,3200],    tare:[600,820,1050],     slots:1 },
+  pot:   { cap:[6000,9000,12000],   tare:[2400,3000,3600],   slots:2 },
+};
+function makeCon(shape,size,fill){
+  const V=VESSEL[shape];
+  return { shape, size, tare:V.tare[size], fill,
+           net: Math.round(V.cap[size]*fill/100)*100 };
+}
 
 // ひとつの保管場所に置かれた、ある品目のかたまり
 function makeLot(item){
@@ -274,25 +286,27 @@ function makeLot(item){
     lot.canSize = pick([4, 4, 1.8]);
     lot.cans = [];
     const n = ri(2, 4);
-    for(let i=0;i<n;i++) lot.cans.push(pick(FILLS));
+    for(let i=0;i<n;i++) lot.cans.push(1);          // 未開封は満タン
+    lot.cans[Math.floor(RND()*n)] = pick(PART);     // 開封ずみは1本だけ
   } else if(item.kind==="boxes"){
     lot.boxes = [];
-    const n = ri(2, 4);
-    for(let i=0;i<n;i++) lot.boxes.push(RND() < 0.22 ? 0 : ri(2, 8));
+    const n = ri(2, 4), full = ri(5, 9);
+    for(let i=0;i<n;i++) lot.boxes.push(full);      // 未開封の箱は満杯
+    lot.boxes[Math.floor(RND()*n)] = ri(0, full-1); // あけかけは1箱だけ
   } else if(item.kind==="weigh"){
-    // 容器に入っていて、はかりは中身＋容器の重さ（風袋）を表示する
+    // はかりは「中身＋容器」の重さを表示する。使いかけは かならず ひとつだけ
     lot.cons=[];
-    const n=ri(2,3);
-    for(let i=0;i<n;i++){
-      const size=ri(0,2);                       // 0=小 1=中 2=大
-      lot.cons.push({ size, tare:[180,320,460][size], net: ri(2,6+size*6)*50 });
+    if(item.vessel==="pot"){
+      const n=ri(2,3);
+      for(let i=0;i<n;i++) lot.cons.push(makeCon("vat", ri(0,2), 1));
+      lot.cons.push(makeCon("pot", ri(0,2), 1));
+    } else {
+      const n=ri(2,3);
+      for(let i=0;i<n;i++) lot.cons.push(makeCon("tupper", ri(0,2), 1));
     }
-  } else if(item.kind==="vats"){
-    lot.vats = [];
-    const n = ri(2, 3);
-    for(let i=0;i<n;i++) lot.vats.push(pick(FILLS));
-    lot.potSize = pick([4, 5, 6]);
-    lot.potFill = RND() < 0.3 ? 0 : pick(FILLS);
+    const u=Math.floor(RND()*lot.cons.length);
+    const c=lot.cons[u];
+    lot.cons[u]=makeCon(c.shape,c.size,pick(PART));
   }
   return lot;
 }
@@ -301,7 +315,6 @@ function lotAmount(lot){
   if(lot.kind==="liquid") return lot.cans.reduce((a,b)=>a+b,0) * lot.canSize;
   if(lot.kind==="boxes")  return lot.boxes.reduce((a,b)=>a+b,0);
   if(lot.kind==="weigh")  return lot.cons.reduce((a,c)=>a+c.net,0);
-  if(lot.kind==="vats")   return lot.vats.reduce((a,b)=>a+b,0) + lot.potSize*lot.potFill;
   return 0;
 }
 
@@ -317,8 +330,8 @@ function buildStore(){
     const kinds = PLACES[p].kinds;
     if(p==="prep"){
       // 作業台には必ず寸胴の仕掛品を置く。そのうえで、量るタッパーを足す
-      const vats = shuffled(CATALOG.filter(i=>i.kind==="vats" && !used[i.id]));
-      const wgs  = shuffled(CATALOG.filter(i=>i.kind==="weigh" && i.at.indexOf(p)>=0 && !used[i.id]));
+      const vats = shuffled(CATALOG.filter(i=>i.vessel==="pot" && !used[i.id]));
+      const wgs  = shuffled(CATALOG.filter(i=>i.vessel==="tupper" && i.at.indexOf(p)>=0 && !used[i.id]));
       const nv = Math.min(vats.length, ri(2,3));
       for(let i=0;i<nv;i++) put(p, vats[i]);
       const nw = Math.min(wgs.length, Math.max(1, 4-nv));
@@ -373,10 +386,10 @@ function buildRequests(store, used){
     else if(r < 0.62) theo = Math.max(1, Math.round(expected * (1.6 + RND()*1.0)));
     else              theo = Math.max(1, Math.round(expected * (0.22 + RND()*0.32)));
 
-    if(it.unit==="g") theo = Math.max(50, Math.round(theo/50)*50);
+    if(it.unit==="g") theo = Math.max(100, Math.round(theo/100)*100);
     return { id, name:it.name, unit:it.unit, color:it.color, kind:it.kind,
              places:used[id].slice(), expected, delivery, theo,
-             reason: it.kind==="vats" ? "仕掛品のため毎回" : pick(REASONS) };
+             reason: it.vessel==="pot" ? "仕掛品のため毎回" : pick(REASONS) };
   });
 }
 
@@ -395,8 +408,9 @@ function newDay(){
 }
 const remaining = () => G.day.reqs.filter(r => !G.day.confirmed[r.id]).length;
 const reqOf = id => G.day.reqs.find(r => r.id === id);
-const CARRY_MAX = 4;
+const CARRY_MAX = 4;   // 枠。寸胴は2枠ぶん
 const conOf = c => G.day.store[c.place][c.li].cons[c.bi];
+const carryUsed = () => G.day.carry.reduce((a,c)=>a+VESSEL[conOf(c).shape].slots,0);
 const selKey = e => e.t+":"+e.li+":"+e.bi;
 const carryKey = c => c.place+":"+c.li+":"+c.bi;
 // いま選んでいるものに対してできること
@@ -511,6 +525,25 @@ function warnsAt(v, theo){
   if(v > theo*1.5 || v < theo/1.6) return "想定在庫から大きく離れます";
   return null;
 }
+const stepOf = r => (r.unit==="g") ? 100 : (r.kind==="liquid") ? 0.5 : 1;
+function stepValue(r,dir){
+  G.day.confirmed[r.id]=false;
+  const d=dir*stepOf(r);
+  G.day.inputs[r.id]=Math.max(0,Math.round(((G.day.inputs[r.id]||0)+d)*10)/10);
+  G.day.touched[r.id]=true; SFX.tick();
+}
+// 長おしで数字を連続して変えられるようにする
+let repAcc=0, repDir=0;
+function updatePC(dt){
+  const p=G.pc;
+  if(!p || p.dialog){ repDir=0; return; }
+  const dir=k("ArrowLeft")?-1:(k("ArrowRight")?1:0);
+  if(dir!==repDir){ repDir=dir; repAcc=-0.30; return; }   // 押しはじめは少し待つ
+  if(!dir) return;
+  repAcc+=dt;
+  let guard=0;
+  while(repAcc>=0.045 && guard++<40){ repAcc-=0.045; stepValue(G.day.reqs[p.row],dir); }
+}
 function confirmRow(r){
   G.day.confirmed[r.id]=true;
   if(!G.day.touched[r.id]) G.day.skips++;
@@ -604,8 +637,11 @@ function onKey(key){
       else if(e.t==="con"){
         const ix=carryIdx(v.place,e.li,e.bi);
         if(ix>=0){ G.day.carry.splice(ix,1); SFX.close(); }        // 取った場所でだけ もどせる
-        else if(G.day.carry.length<CARRY_MAX){ G.day.carry.push({place:v.place,li:e.li,bi:e.bi}); SFX.open(); }
-        else SFX.warn();
+        else {
+          const need=VESSEL[G.day.store[v.place][e.li].cons[e.bi].shape].slots;
+          if(carryUsed()+need<=CARRY_MAX){ G.day.carry.push({place:v.place,li:e.li,bi:e.bi}); SFX.open(); }
+          else SFX.warn();
+        }
       }
       return;
     }
@@ -628,13 +664,7 @@ function onKey(key){
       if(key==="ArrowDown"){ p.row=(p.row+1)%rs.length; SFX.move(); }
 
       const r=rs[p.row];
-      if(key==="ArrowLeft"||key==="ArrowRight"){
-        G.day.confirmed[r.id]=false;
-        const step=(r.unit==="g")?50:(r.kind==="liquid"||r.kind==="vats")?0.5:1;
-        const d=(key==="ArrowLeft")?-step:step;
-        G.day.inputs[r.id]=Math.max(0,Math.round(((G.day.inputs[r.id]||0)+d)*10)/10);
-        G.day.touched[r.id]=true; SFX.tick();
-      }
+      if(key==="ArrowLeft"||key==="ArrowRight"){ stepValue(r,key==="ArrowLeft"?-1:1); }
       if((key==="Enter"||key==="z") && !G.day.confirmed[r.id]){
         const msg=warnsAt(G.day.inputs[r.id], r.theo);
         if(msg){ p.dialog={r,msg,choice:0}; SFX.warn(); }
@@ -728,7 +758,7 @@ function drawHUD(){
   txt("じかん",150,7,{size:15,color:C.sumi[400]});
   txt(String(Math.floor(sec/60)).padStart(2,"0")+":"+String(sec%60).padStart(2,"0"),
       206,5,{size:17,color:C.white,bold:true});
-  if(G.day.carry.length) txt("もっている "+G.day.carry.length+"こ",W-50,7,
+  if(G.day.carry.length) txt("もっている "+carryUsed()+"/"+CARRY_MAX,W-50,7,
       {size:14,color:C.mikan[300],align:"right"});
   txt(BGM.on?"♪":"♪ OFF",W-14,7,{size:14,color:BGM.on?C.wasabi[300]:C.sumi[600],align:"right"});
 }
@@ -968,39 +998,28 @@ function drawLot(lot,item,sx,sw,base,li,v,availH){
     }
   } else if(lot.kind==="weigh"){
     const n=lot.cons.length;
-    const base2=Math.min(118,Math.floor((sw-10)/n)-10);
-    const fac=[0.80,1.0,1.18];
-    const ws=lot.cons.map(c=>Math.round(base2*fac[c.size||1]));
-    const totalW=ws.reduce((a,b)=>a+b,0)+(n-1)*10;
-    let ox=(sw-totalW)/2, run=0;
+    const FW={tupper:[0.82,1.0,1.16], vat:[0.92,1.06,1.2], pot:[1.5,1.7,1.9]};
+    const FH={tupper:0.80, vat:0.62, pot:0.80};
+    const unit=Math.min(126,Math.floor((sw-16)/(n+0.9)));
+    let ws=lot.cons.map(c=>Math.round(unit*FW[c.shape][c.size]));
+    let totalW=ws.reduce((a,b)=>a+b,0)+(n-1)*10;
+    if(totalW>sw-8){ const kk=(sw-8)/totalW; ws=ws.map(w2=>Math.max(14,Math.round(w2*kk))); }
+    let hs=lot.cons.map((c,i)=>Math.round(ws[i]*FH[c.shape]));
+    const maxH=Math.max.apply(null,hs);
+    if(maxH>availH-8){ const kk=(availH-8)/maxH; hs=hs.map(h2=>Math.max(12,Math.round(h2*kk))); }
+    totalW=ws.reduce((a,b)=>a+b,0)+(n-1)*10;
+    let run=0; const ox=(sw-totalW)/2;
     lot.cons.forEach((c,ci)=>{
-      const bw2=ws[ci];
-      const bh2=Math.min(availH-6,Math.max(34,Math.round(bw2*0.80)));
-      const x=sx+ox+run, y=base-bh2; run+=bw2+10;
+      const bw2=ws[ci], bh2=hs[ci], x=sx+ox+run, y=base-bh2; run+=bw2+10;
       const held=carryIdx(v.place,li,ci)>=0;
-      if(held){                                   // 持ち出し中は あとが残る
+      if(held){
         rr(x,base-7,bw2,7,"rgba(0,0,0,0.42)");
         txt("もちだし中",x+bw2/2,base-26,{size:12,color:C.sumi[600],align:"center"});
-      } else drawBowl(x,y,bw2,bh2,item.color,c.tare,false);
-      mark(v,"con:"+li+":"+ci,x,held?base-30:y,bw2,held?30:bh2);
+      } else if(c.shape==="tupper") drawBowl(x,y,bw2,bh2,item.color,c.tare,false);
+      else if(c.shape==="vat")      drawVat(x,y,bw2,bh2,c.fill,c.tare,item.color);
+      else                          drawPot(x,y,bw2,bh2,c.fill,c.tare,item.color);
+      mark(v,"con:"+li+":"+ci,x,held?base-30:(y-20),bw2,held?30:(bh2+20));
     });
-  } else if(lot.kind==="vats"){
-    // 寸胴は「何バット分か」に見合う大きさにする（面積が容量に比例するよう √倍）
-    const n=lot.vats.length, scale=Math.sqrt(lot.potSize);
-    let vh=Math.min(46,Math.floor((availH-4)/(scale*0.96)));
-    let vw=Math.round(vh*1.45);
-    let ph=Math.round(vh*scale*0.96), pw=Math.round(vw*scale*0.82);
-    let total=n*(vw+10)+pw;
-    if(total>sw-8){
-      const kk=(sw-8)/total;
-      vw=Math.max(16,Math.floor(vw*kk)); vh=Math.max(12,Math.floor(vh*kk));
-      pw=Math.max(20,Math.floor(pw*kk)); ph=Math.max(16,Math.floor(ph*kk));
-      total=n*(vw+10)+pw;
-    }
-    const ox=(sw-total)/2;
-    lot.vats.forEach((f,i)=>drawVat(sx+ox+i*(vw+10),base-vh,vw,vh,f));
-    drawPot(sx+ox+n*(vw+10),base-ph,pw,ph,lot.potFill,lot.potSize);
-    mark(v,"look:"+li+":0",sx+ox-6,base-ph-24,total+12,ph+30);   // 容量ラベルまで囲む
   }
 }
 const comma=v=>String(v).replace(/\B(?=(\d{3})+(?!\d))/g,",");
@@ -1118,31 +1137,32 @@ function drawBox(x,y,w,h,open,contents,col){
 function maxLine(x,y,w,col){
   for(let i=0;i<w;i+=7) rr(x+i,y,4,2,col||"#ffffffb0");
 }
-function drawVat(x,y,w,h,fill){
+function drawVat(x,y,w,h,fill,tare,col){
   rr(x,y,w,h,"#aab0ba"); rr(x+4,y+4,w-8,h-8,"#5c626c");
   const fh=Math.round((h-14)*fill);
-  rr(x+5,y+h-5-fh,w-10,fh,"#a8742c"); rr(x+5,y+h-5-fh,w-10,3,"#c69244");
+  rr(x+5,y+h-5-fh,w-10,fh,col||"#a8742c"); rr(x+5,y+h-5-fh,w-10,3,"#ffffff55");
   maxLine(x+5,y+9,w-10);                       // いっぱいの線
   ro(x,y,w,h,"#474d56",3);
-  if(w>=40){            // 容量は入れ物の外に出す（中身の線を隠さないため）
-    rr(x+w/2-21,y-15,42,13,"#e8e4d8");
-    txt("1バット",x+w/2,y-14,{size:10,color:"#2c2c30",bold:true,align:"center"});
+  if(tare && w>=58){
+    rr(x+w/2-34,y-15,68,13,"#f4f1e6"); ro(x+w/2-34,y-15,68,13,"#b8b2a2",2);
+    txt("空 "+comma(tare)+"g",x+w/2,y-14,{size:10,color:"#2c2c30",bold:true,align:"center"});
   }
 }
-function drawPot(x,y,w,h,fill,size){
+function drawPot(x,y,w,h,fill,tare,col){
   const hw=Math.max(8,Math.round(w*0.12));
   rr(x-hw,y+Math.round(h*0.18),hw,Math.round(h*0.1),"#8a9098");
   rr(x+w,y+Math.round(h*0.18),hw,Math.round(h*0.1),"#8a9098");
   rr(x,y,w,h,"#9aa0aa"); rr(x+5,y+7,w-10,h-12,"#3a3026");
   const fh=Math.round((h-24)*fill);
-  rr(x+6,y+h-6-fh,w-12,fh,"#a8742c"); rr(x+6,y+h-6-fh,w-12,3,"#c69244");
+  rr(x+6,y+h-6-fh,w-12,fh,col||"#a8742c"); rr(x+6,y+h-6-fh,w-12,3,"#ffffff55");
   maxLine(x+6,y+18,w-12);                      // いっぱいの線
   ro(x,y,w,h,"#5a6069",3);
-  if(size && w>=50){
-    rr(x+w/2-31,y-17,62,15,"#e8e4d8");
-    txt(size+"バット",x+w/2,y-16,{size:12,color:"#2c2c30",bold:true,align:"center"});
+  if(tare && w>=84){
+    rr(x+w/2-47,y-18,94,15,"#f4f1e6"); ro(x+w/2-47,y-18,94,15,"#b8b2a2",2);
+    txt("空のとき "+comma(tare)+"g",x+w/2,y-17,{size:11,color:"#2c2c30",bold:true,align:"center"});
   }
 }
+
 
 /* ---- はかりだい ---- */
 function drawWeighStation(){
@@ -1168,7 +1188,9 @@ function drawWeighStation(){
     const item=CATALOG.find(x=>x.id===lot.itemId), o=conOf(c);
     const x=cx0+i*(cw+cg), y=104, on=!!G.ws.on[carryKey(c)];
     rr(x,y,cw,86, on?"#13261f":"#1a1e28"); ro(x,y,cw,86, on?C.wasabi[500]:"#333a46",2);
-    drawBowl(x+28,y+10,cw-56,48,item.color,o.tare,false);
+    if(o.shape==="tupper") drawBowl(x+28,y+10,cw-56,48,item.color,o.tare,false);
+    else if(o.shape==="vat") drawVat(x+28,y+16,cw-56,40,o.fill,0,item.color);
+    else drawPot(x+34,y+8,cw-68,52,o.fill,0,item.color);
     txt(item.name,x+cw/2,y+60,{size:14,color:C.sumi[300],align:"center"});
     if(on){ rr(x+8,y+6,52,16,"#13261f"); ro(x+8,y+6,52,16,C.wasabi[500],2);
       txt("のせた",x+34,y+8,{size:11,color:C.wasabi[300],bold:true,align:"center"}); }
@@ -1188,17 +1210,20 @@ function drawWeighStation(){
   on.forEach((c,i)=>{
     const lot=G.day.store[c.place][c.li];
     const item=CATALOG.find(x=>x.id===lot.itemId);
-    drawBowl(ox+i*(bw2+gap),plateY-bh2,bw2,bh2,item.color,conOf(c).tare,false);
+    const o2=conOf(c);
+    if(o2.shape==="tupper") drawBowl(ox+i*(bw2+gap),plateY-bh2,bw2,bh2,item.color,o2.tare,false);
+    else if(o2.shape==="vat") drawVat(ox+i*(bw2+gap),plateY-bh2+12,bw2,bh2-12,o2.fill,0,item.color);
+    else drawPot(ox+i*(bw2+gap)+8,plateY-bh2,bw2-16,bh2,o2.fill,0,item.color);
   });
   const w=620,h=96,x=(W-w)/2,y=plateY;
   rr(x+16,y,w-32,12,"#c6ccd6"); ro(x+16,y,w-32,12,"#878d96",2);
   rr(x,y+12,w,h-12,"#aeb4be"); rr(x,y+12,w,5,"#ced4de");
   rr(x+20,y+28,96,26,"#8e949e");
   txt("はかり",x+68,y+32,{size:15,color:"#2c3038",align:"center"});
-  rr(x+w-290,y+24,268,44,"#0d1a14"); ro(x+w-290,y+24,268,44,"#27382f",2);
-  txt(on.length?comma(gross)+" g":"- - - - g",x+w-38,y+33,
-      {size:29,color:"#6cf0a8",bold:true,align:"right"});
-  txt("容器こみの 重さ",x+w-262,y+33,{size:12,color:"#4e8a6c"});
+  rr(x+w-300,y+18,278,56,"#0d1a14"); ro(x+w-300,y+18,278,56,"#27382f",2);
+  txt("容器こみの 重さ",x+w-288,y+22,{size:12,color:"#4e8a6c"});
+  txt(on.length?comma(gross)+" g":"- - - - g",x+w-36,y+36,
+      {size:28,color:"#6cf0a8",bold:true,align:"right"});
   if(on.length) txt("空の容器の ごうけい  "+comma(tare)+"g",x+w-38,y+72,
       {size:15,color:"#2c3038",bold:true,align:"right"});
 
@@ -1348,6 +1373,7 @@ let prev=performance.now();
 function frame(now){
   const dt=Math.min(0.05,(now-prev)/1000); prev=now; G.t+=dt;
   if(G.scene==="room") updateRoom(dt);
+  if(G.scene==="pc") updatePC(dt);
   ctx.clearRect(0,0,W,H);
   switch(G.scene){
     case "title":    drawTitle(); break;
