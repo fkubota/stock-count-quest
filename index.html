@@ -221,10 +221,10 @@ function notifyState(){
 /* ---------------------------------------------------------------- 保管場所 */
 const PLACES = {
   fridge:   { label:"れいぞうこ",         room:"kitchen",  kinds:["pieces","liquid","pile","weigh"] },
-  shelf:    { label:"じょうおんだな",     room:"kitchen",  kinds:["boxes","liquid","weigh"] },
-  prep:     { label:"さぎょうだい",       room:"kitchen",  kinds:["vats"] },
+  shelf:    { label:"じょうおんだな",     room:"kitchen",  kinds:["boxes","liquid"] },
+  prep:     { label:"さぎょうだい",       room:"kitchen",  kinds:["vats","weigh"] },
   freezer:  { label:"れいとうこ",         room:"backyard", kinds:["frozen"] },
-  backshelf:{ label:"バックヤードのたな", room:"backyard", kinds:["boxes","pieces","pile","weigh"] },
+  backshelf:{ label:"バックヤードのたな", room:"backyard", kinds:["boxes","pieces","pile"] },
 };
 
 /* ---------------------------------------------------------------- 品目カタログ */
@@ -250,10 +250,11 @@ const CATALOG = [
   {id:"dashi",    name:"和風だし",       unit:"バット", color:"#b08848", kind:"vats",   at:["prep"]},
   {id:"demi",     name:"デミグラス",     unit:"バット", color:"#a06030", kind:"vats",   at:["prep"]},
   {id:"sauce",    name:"じかせいダレ",   unit:"バット", color:"#8a5c34", kind:"vats",   at:["prep"]},
-  {id:"curry",    name:"カレー",         unit:"g",     color:"#9a5a22", kind:"weigh",  at:["fridge","backshelf"]},
-  {id:"meat",     name:"ミートソース",   unit:"g",     color:"#8c3a28", kind:"weigh",  at:["fridge"]},
-  {id:"white",    name:"ホワイトソース", unit:"g",     color:"#e4ddc6", kind:"weigh",  at:["fridge","shelf"]},
-  {id:"tane",     name:"ハンバーグのタネ",unit:"g",    color:"#b07a58", kind:"weigh",  at:["fridge","backshelf"]},
+  {id:"curry",    name:"カレー",         unit:"g",     color:"#b06a20", kind:"weigh",  at:["fridge","prep"]},
+  {id:"meat",     name:"ミートソース",   unit:"g",     color:"#a8402c", kind:"weigh",  at:["fridge","prep"]},
+  {id:"white",    name:"ホワイトソース", unit:"g",     color:"#dcd4bc", kind:"weigh",  at:["fridge","prep"]},
+  {id:"tane",     name:"ハンバーグのタネ",unit:"g",    color:"#b07a58", kind:"weigh",  at:["fridge","prep"]},
+  {id:"tartar",   name:"タルタルソース", unit:"g",     color:"#ece2bc", kind:"weigh",  at:["fridge","prep"]},
 ];
 
 const FILLS = [1, 1, 0.92, 0.85, 0.78, 0.7, 0.62, 0.55, 0.45, 0.38, 0.3, 0.22, 0.15, 0.08];
@@ -965,7 +966,7 @@ function drawLot(lot,item,sx,sw,base,li,v,availH){
     let ox=(sw-totalW)/2, run=0;
     lot.cons.forEach((c,ci)=>{
       const bw2=ws[ci];
-      const bh2=Math.min(availH-6,Math.max(30,Math.round(bw2*0.62)));
+      const bh2=Math.min(availH-6,Math.max(34,Math.round(bw2*0.80)));
       const x=sx+ox+run, y=base-bh2; run+=bw2+10;
       const held=carryIdx(v.place,li,ci)>=0;
       if(held){                                   // 持ち出し中は あとが残る
@@ -994,17 +995,22 @@ function drawLot(lot,item,sx,sw,base,li,v,availH){
   }
 }
 const comma=v=>String(v).replace(/\B(?=(\d{3})+(?!\d))/g,",");
+// ふた付きのタッパー。中は見えないので、はかりに載せないと量が分からない
 function drawBowl(x,y,w,h,col,tare,onScale){
-  rr(x,y,w,h,"#b4bac4"); rr(x+4,y+4,w-8,h-8,"#676d76");
-  rr(x+6,y+Math.round(h*0.40),w-12,Math.round(h*0.52),col);     // 中身
-  rr(x+6,y+Math.round(h*0.40),w-12,3,"#ffffff88");
-  ro(x,y,w,h,"#464c55",3);
+  const lidH=Math.max(7,Math.round(h*0.22));
+  rr(x+2,y+lidH-2,w-4,h-lidH+2,"#dfe4ea");               // 本体（白い樹脂）
+  rr(x+5,y+lidH+1,w-10,h-lidH-4,"#eef1f5");
+  ro(x+2,y+lidH-2,w-4,h-lidH+2,"#9aa2ac",3);
+  rr(x,y,w,lidH,"#c4d2dc");                              // ふた
+  rr(x+4,y+2,w-8,2,"#ffffffcc");
+  ro(x,y,w,lidH,"#8e98a4",2);
+  rr(x+Math.round(w*0.12),y+lidH+4,Math.round(w*0.2),4,col);   // 中身の色のテープ
   if(w>=84){
-    rr(x+w/2-44,y+h-17,88,14,"#efe9d8");
-    txt("空のとき "+tare+"g",x+w/2,y+h-16,{size:10,color:"#2c2c30",bold:true,align:"center"});
+    rr(x+w/2-44,y+h-18,88,14,"#f4f1e6"); ro(x+w/2-44,y+h-18,88,14,"#b8b2a2",2);
+    txt("空のとき "+tare+"g",x+w/2,y+h-17,{size:10,color:"#2c2c30",bold:true,align:"center"});
   } else if(w>=56){
-    rr(x+w/2-28,y+h-16,56,13,"#efe9d8");
-    txt("空 "+tare+"g",x+w/2,y+h-15,{size:10,color:"#2c2c30",bold:true,align:"center"});
+    rr(x+w/2-28,y+h-17,56,13,"#f4f1e6");
+    txt("空 "+tare+"g",x+w/2,y+h-16,{size:10,color:"#2c2c30",bold:true,align:"center"});
   }
   if(onScale) ro(x-5,y-5,w+10,h+10,"#6cf0a8",3);
 }
@@ -1153,9 +1159,10 @@ function drawWeighStation(){
     const item=CATALOG.find(x=>x.id===lot.itemId), o=conOf(c);
     const x=cx0+i*(cw+cg), y=104, on=!!G.ws.on[carryKey(c)];
     rr(x,y,cw,86, on?"#13261f":"#1a1e28"); ro(x,y,cw,86, on?C.wasabi[500]:"#333a46",2);
-    drawBowl(x+20,y+14,cw-40,38,item.color,o.tare,false);
+    drawBowl(x+28,y+10,cw-56,48,item.color,o.tare,false);
     txt(item.name,x+cw/2,y+60,{size:14,color:C.sumi[300],align:"center"});
-    if(on) txt("のせた",x+cw-14,y+6,{size:12,color:C.wasabi[300],bold:true,align:"right"});
+    if(on){ rr(x+8,y+6,52,16,"#13261f"); ro(x+8,y+6,52,16,C.wasabi[500],2);
+      txt("のせた",x+34,y+8,{size:11,color:C.wasabi[300],bold:true,align:"center"}); }
     if(i===G.ws.cursor){
       ro(x-6,y-6,cw+12,98,C.mikan[300],3);
       drawActionButton(x+cw/2, y+104, on?"はかりから おろす":"はかりに のせる");
@@ -1167,7 +1174,7 @@ function drawWeighStation(){
   let gross=0, tare=0;
   on.forEach(c=>{ const o=conOf(c); gross+=o.net+o.tare; tare+=o.tare; });
 
-  const plateY=400, bw2=112, bh2=36, gap=8;
+  const plateY=400, bw2=108, bh2=56, gap=8;
   const totalW=on.length?on.length*(bw2+gap)-gap:0, ox=(W-totalW)/2;
   on.forEach((c,i)=>{
     const lot=G.day.store[c.place][c.li];
