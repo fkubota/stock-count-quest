@@ -281,8 +281,8 @@ function makeLot(item){
     lot.cons=[];
     const n=ri(2,3);
     for(let i=0;i<n;i++){
-      const tare=pick([180,240,320,460]);
-      lot.cons.push({tare, net: ri(2,18)*50});
+      const size=ri(0,2);                       // 0=小 1=中 2=大
+      lot.cons.push({ size, tare:[180,320,460][size], net: ri(2,6+size*6)*50 });
     }
   } else if(item.kind==="vats"){
     lot.vats = [];
@@ -390,6 +390,23 @@ const conOf = c => G.day.store[c.place][c.li].cons[c.bi];
 const selKey = e => e.t+":"+e.li+":"+e.bi;
 const carryKey = c => c.place+":"+c.li+":"+c.bi;
 // いま選んでいるものに対してできること
+// 画面上の位置を見て、おした向きにある一番近いものへ移る
+function moveCursor(v,dx,dy){
+  const a=v.rects[selKey(v.sel[v.cursor])];
+  if(!a){ v.cursor=(v.cursor+(dx+dy)+v.sel.length)%v.sel.length; SFX.move(); return; }
+  const ax=a.x+a.w/2, ay=a.y+a.h/2;
+  let best=-1, score=Infinity;
+  v.sel.forEach((e,i)=>{
+    if(i===v.cursor) return;
+    const r=v.rects[selKey(e)]; if(!r) return;
+    const ddx=(r.x+r.w/2)-ax, ddy=(r.y+r.h/2)-ay;
+    if(dx){ if(Math.sign(ddx)!==dx || Math.abs(ddx)<4) return; if(Math.abs(ddy)>Math.abs(ddx)*1.8) return; }
+    if(dy){ if(Math.sign(ddy)!==dy || Math.abs(ddy)<4) return; if(Math.abs(ddx)>Math.abs(ddy)*2.4) return; }
+    const sc=Math.abs(ddx)*(dx?1:2.4)+Math.abs(ddy)*(dy?1:2.4);
+    if(sc<score){ score=sc; best=i; }
+  });
+  if(best>=0){ v.cursor=best; SFX.move(); }
+}
 function selAction(e){
   if(!e) return null;
   if(e.t==="box")  return G.day.opened[G.view.place+":"+e.li+":"+e.bi] ? "しめる" : "あける";
@@ -563,8 +580,10 @@ function onKey(key){
     case "place": {
       const v=G.view, e=v.sel[v.cursor];
       if(key==="x"||key==="Escape"){ SFX.close(); G.scene="room"; return; }
-      if(key==="ArrowLeft"){  v.cursor=(v.cursor+v.sel.length-1)%v.sel.length; SFX.move(); return; }
-      if(key==="ArrowRight"){ v.cursor=(v.cursor+1)%v.sel.length; SFX.move(); return; }
+      if(key==="ArrowLeft"){  moveCursor(v,-1,0); return; }
+      if(key==="ArrowRight"){ moveCursor(v, 1,0); return; }
+      if(key==="ArrowUp"){    moveCursor(v, 0,-1); return; }
+      if(key==="ArrowDown"){  moveCursor(v, 0, 1); return; }
       if(key!=="z" || !e) return;
       if(e.t==="pile"){ v.peek[e.li]=!v.peek[e.li]; SFX.open(); }
       else if(e.t==="box"){
@@ -854,7 +873,7 @@ function drawPlace(){
     const act=selAction(e);
     if(act) drawActionButton(rc.x+rc.w/2, Math.max(44, rc.y-44), act);
   }
-  drawKeyHints([["←→","えらぶ"],["X","とじる"]],H-34);
+  drawKeyHints([["↑↓←→","えらぶ"],["X","とじる"]],H-34);
 }
 function drawActionButton(cx,y,label){
   const kw=26, lw=tw(label,15,true), w=kw+lw+40, x=cx-w/2;
@@ -939,11 +958,15 @@ function drawLot(lot,item,sx,sw,base,li,v,availH){
     }
   } else if(lot.kind==="weigh"){
     const n=lot.cons.length;
-    let bw2=Math.min(120,Math.floor((sw-10)/n)-8);
-    let bh2=Math.min(availH-6,Math.max(34,Math.round(bw2*0.66)));
-    const step=bw2+8, ox=(sw-((n-1)*step+bw2))/2;
+    const base2=Math.min(118,Math.floor((sw-10)/n)-10);
+    const fac=[0.80,1.0,1.18];
+    const ws=lot.cons.map(c=>Math.round(base2*fac[c.size||1]));
+    const totalW=ws.reduce((a,b)=>a+b,0)+(n-1)*10;
+    let ox=(sw-totalW)/2, run=0;
     lot.cons.forEach((c,ci)=>{
-      const x=sx+ox+ci*step, y=base-bh2;
+      const bw2=ws[ci];
+      const bh2=Math.min(availH-6,Math.max(30,Math.round(bw2*0.62)));
+      const x=sx+ox+run, y=base-bh2; run+=bw2+10;
       const held=carryIdx(v.place,li,ci)>=0;
       if(held){                                   // 持ち出し中は あとが残る
         rr(x,base-7,bw2,7,"rgba(0,0,0,0.42)");
@@ -976,9 +999,12 @@ function drawBowl(x,y,w,h,col,tare,onScale){
   rr(x+6,y+Math.round(h*0.40),w-12,Math.round(h*0.52),col);     // 中身
   rr(x+6,y+Math.round(h*0.40),w-12,3,"#ffffff88");
   ro(x,y,w,h,"#464c55",3);
-  if(w>=72){
-    rr(x+w/2-36,y+h-16,72,13,"#efe9d8");
-    txt("風袋 "+tare+"g",x+w/2,y+h-15,{size:10,color:"#2c2c30",bold:true,align:"center"});
+  if(w>=84){
+    rr(x+w/2-44,y+h-17,88,14,"#efe9d8");
+    txt("空のとき "+tare+"g",x+w/2,y+h-16,{size:10,color:"#2c2c30",bold:true,align:"center"});
+  } else if(w>=56){
+    rr(x+w/2-28,y+h-16,56,13,"#efe9d8");
+    txt("空 "+tare+"g",x+w/2,y+h-15,{size:10,color:"#2c2c30",bold:true,align:"center"});
   }
   if(onScale) ro(x-5,y-5,w+10,h+10,"#6cf0a8",3);
 }
@@ -1045,10 +1071,11 @@ function drawBottle(x,y,w,h,fill,size){
   const fh=Math.round((bodyH-8)*fill);
   rr(x+3,bodyY+bodyH-4-fh,w-6,fh,LIQ);
   rr(x+3,bodyY+bodyH-4-fh,w-6,2,"#b89440");
+  maxLine(x+3,bodyY+4,w-6,"#ffffff66");        // いっぱいの線
   rr(x+4,bodyY+4,4,bodyH-12,"rgba(255,245,210,0.13)");
   ro(x,bodyY,w,bodyH,GLASS_D,2);
-  rr(x+5,bodyY+5,w-10,20,"#efe9d8"); ro(x+5,bodyY+5,w-10,20,"#a89c80",2);
-  txt(num(size)+"L",cx,bodyY+8,{size:13,color:"#2c2c30",bold:true,align:"center"});
+  rr(x+3,y+neckH-2,w-6,18,"#efe9d8"); ro(x+3,y+neckH-2,w-6,18,"#a89c80",2);
+  txt(num(size)+"L",cx,y+neckH+1,{size:13,color:"#2c2c30",bold:true,align:"center"});
 }
 function drawBox(x,y,w,h,open,contents,col){
   if(!open){
@@ -1072,14 +1099,19 @@ function drawBox(x,y,w,h,open,contents,col){
     }
   }
 }
+// いっぱいまで入れたときの高さを示す線
+function maxLine(x,y,w,col){
+  for(let i=0;i<w;i+=7) rr(x+i,y,4,2,col||"#ffffffb0");
+}
 function drawVat(x,y,w,h,fill){
   rr(x,y,w,h,"#aab0ba"); rr(x+4,y+4,w-8,h-8,"#5c626c");
   const fh=Math.round((h-14)*fill);
   rr(x+5,y+h-5-fh,w-10,fh,"#a8742c"); rr(x+5,y+h-5-fh,w-10,3,"#c69244");
+  maxLine(x+5,y+9,w-10);                       // いっぱいの線
   ro(x,y,w,h,"#474d56",3);
-  if(w>=44){                                  // 入れ物に容量が書いてある
-    rr(x+w/2-20,y+h-16,40,12,"#e8e4d8");
-    txt("1バット",x+w/2,y+h-15,{size:10,color:"#2c2c30",bold:true,align:"center"});
+  if(w>=40){            // 容量は入れ物の外に出す（中身の線を隠さないため）
+    rr(x+w/2-21,y-15,42,13,"#e8e4d8");
+    txt("1バット",x+w/2,y-14,{size:10,color:"#2c2c30",bold:true,align:"center"});
   }
 }
 function drawPot(x,y,w,h,fill,size){
@@ -1089,10 +1121,11 @@ function drawPot(x,y,w,h,fill,size){
   rr(x,y,w,h,"#9aa0aa"); rr(x+5,y+7,w-10,h-12,"#3a3026");
   const fh=Math.round((h-24)*fill);
   rr(x+6,y+h-6-fh,w-12,fh,"#a8742c"); rr(x+6,y+h-6-fh,w-12,3,"#c69244");
+  maxLine(x+6,y+18,w-12);                      // いっぱいの線
   ro(x,y,w,h,"#5a6069",3);
-  if(size && w>=52){
-    rr(x+w/2-30,y+h-20,60,15,"#e8e4d8");
-    txt(size+"バット",x+w/2,y+h-19,{size:12,color:"#2c2c30",bold:true,align:"center"});
+  if(size && w>=50){
+    rr(x+w/2-31,y-17,62,15,"#e8e4d8");
+    txt(size+"バット",x+w/2,y-16,{size:12,color:"#2c2c30",bold:true,align:"center"});
   }
 }
 
@@ -1113,7 +1146,7 @@ function drawWeighStation(){
   G.ws.cursor=clamp(G.ws.cursor,0,carry.length-1);
 
   // 持っているもの（ここから のせるものを えらぶ）
-  txt("もっているもの",60,76,{size:15,color:C.sumi[500]});
+  txt("もっているもの（はかりに のせるものを えらぶ）",60,76,{size:15,color:C.sumi[500]});
   const cw=180, cg=16, cx0=(W-(carry.length*(cw+cg)-cg))/2;
   carry.forEach((c,i)=>{
     const lot=G.day.store[c.place][c.li];
@@ -1149,8 +1182,9 @@ function drawWeighStation(){
   rr(x+w-290,y+24,268,44,"#0d1a14"); ro(x+w-290,y+24,268,44,"#27382f",2);
   txt(on.length?comma(gross)+" g":"- - - - g",x+w-38,y+33,
       {size:29,color:"#6cf0a8",bold:true,align:"right"});
-  if(on.length) txt("風袋のごうけい "+comma(tare)+"g",x+w-38,y+72,
-      {size:14,color:C.sumi[700],align:"right"});
+  txt("容器こみの 重さ",x+w-262,y+33,{size:12,color:"#4e8a6c"});
+  if(on.length) txt("空の容器の ごうけい  "+comma(tare)+"g",x+w-38,y+72,
+      {size:15,color:"#2c3038",bold:true,align:"right"});
 
   drawKeyHints([["←→","えらぶ"],["X","もどる"]],H-34);
 }
