@@ -250,7 +250,9 @@ const CATALOG = [
   {id:"dashi",    name:"和風だし",       unit:"バット", color:"#b08848", kind:"vats",   at:["prep"]},
   {id:"demi",     name:"デミグラス",     unit:"バット", color:"#a06030", kind:"vats",   at:["prep"]},
   {id:"sauce",    name:"じかせいダレ",   unit:"バット", color:"#8a5c34", kind:"vats",   at:["prep"]},
-  {id:"curry",    name:"カレー",         unit:"g",     color:"#b06a20", kind:"weigh",  at:["fridge","prep"]},
+  {id:"currypot", name:"カレー",         unit:"バット", color:"#b8701c", kind:"vats",   at:["prep"]},
+  {id:"rice",     name:"たきあがりライス",unit:"バット",color:"#eee6d2", kind:"vats",   at:["prep"]},
+  {id:"soup",     name:"スープ",         unit:"バット", color:"#c8a858", kind:"vats",   at:["prep"]},
   {id:"meat",     name:"ミートソース",   unit:"g",     color:"#a8402c", kind:"weigh",  at:["fridge","prep"]},
   {id:"white",    name:"ホワイトソース", unit:"g",     color:"#dcd4bc", kind:"weigh",  at:["fridge","prep"]},
   {id:"tane",     name:"ハンバーグのタネ",unit:"g",    color:"#b07a58", kind:"weigh",  at:["fridge","prep"]},
@@ -310,15 +312,22 @@ function buildStore(){
   const used = {};                  // itemId -> [placeId]
 
   // 各保管場所に 2〜3 品目ずつ置く
+  const put = (p,it) => { store[p].push(makeLot(it)); used[it.id]=[p]; };
   for(const p in PLACES){
     const kinds = PLACES[p].kinds;
+    if(p==="prep"){
+      // 作業台には必ず寸胴の仕掛品を置く。そのうえで、量るタッパーを足す
+      const vats = shuffled(CATALOG.filter(i=>i.kind==="vats" && !used[i.id]));
+      const wgs  = shuffled(CATALOG.filter(i=>i.kind==="weigh" && i.at.indexOf(p)>=0 && !used[i.id]));
+      const nv = Math.min(vats.length, ri(2,3));
+      for(let i=0;i<nv;i++) put(p, vats[i]);
+      const nw = Math.min(wgs.length, Math.max(1, 4-nv));
+      for(let i=0;i<nw;i++) put(p, wgs[i]);
+      continue;
+    }
     const cand = shuffled(CATALOG.filter(i => kinds.indexOf(i.kind)>=0 && i.at.indexOf(p)>=0 && !used[i.id]));
     const n = Math.min(cand.length, ri(3,4));
-    for(let i=0;i<n;i++){
-      const it = cand[i];
-      store[p].push(makeLot(it));
-      used[it.id] = [p];
-    }
+    for(let i=0;i<n;i++) put(p, cand[i]);
   }
   // 1〜2品目は、別の場所にも分けて保管されている
   const splitable = shuffled(Object.keys(used).filter(id=>{
@@ -991,7 +1000,7 @@ function drawLot(lot,item,sx,sw,base,li,v,availH){
     const ox=(sw-total)/2;
     lot.vats.forEach((f,i)=>drawVat(sx+ox+i*(vw+10),base-vh,vw,vh,f));
     drawPot(sx+ox+n*(vw+10),base-ph,pw,ph,lot.potFill,lot.potSize);
-    mark(v,"look:"+li+":0",sx+ox-6,base-ph-6,total+12,ph+12);
+    mark(v,"look:"+li+":0",sx+ox-6,base-ph-24,total+12,ph+30);   // 容量ラベルまで囲む
   }
 }
 const comma=v=>String(v).replace(/\B(?=(\d{3})+(?!\d))/g,",");
