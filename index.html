@@ -248,11 +248,12 @@ const CATALOG = [
   {id:"chopstick",name:"わりばし",       unit:"膳",    color:"#dcc89a", kind:"boxes",  at:["backshelf","shelf"]},
   {id:"napkin",   name:"ナプキン",       unit:"箱",    color:"#e4e4e4", kind:"boxes",  at:["backshelf"]},
   {id:"dashi",    name:"和風だし",       unit:"バット", color:"#b08848", kind:"vats",   at:["prep"]},
-  {id:"curry",    name:"カレールー",     unit:"バット", color:"#a06030", kind:"vats",   at:["prep"]},
+  {id:"demi",     name:"デミグラス",     unit:"バット", color:"#a06030", kind:"vats",   at:["prep"]},
   {id:"sauce",    name:"じかせいダレ",   unit:"バット", color:"#8a5c34", kind:"vats",   at:["prep"]},
-  {id:"flour",    name:"こむぎこ",       unit:"g",     color:"#ece4cc", kind:"weigh",  at:["fridge","shelf","backshelf"]},
-  {id:"panko",    name:"パンこ",         unit:"g",     color:"#e2cfa4", kind:"weigh",  at:["fridge","shelf","backshelf"]},
-  {id:"sesame",   name:"しろごま",       unit:"g",     color:"#ded0b4", kind:"weigh",  at:["fridge","shelf","backshelf"]},
+  {id:"curry",    name:"カレー",         unit:"g",     color:"#9a5a22", kind:"weigh",  at:["fridge","backshelf"]},
+  {id:"meat",     name:"ミートソース",   unit:"g",     color:"#8c3a28", kind:"weigh",  at:["fridge"]},
+  {id:"white",    name:"ホワイトソース", unit:"g",     color:"#e4ddc6", kind:"weigh",  at:["fridge","shelf"]},
+  {id:"tane",     name:"ハンバーグのタネ",unit:"g",    color:"#b07a58", kind:"weigh",  at:["fridge","backshelf"]},
 ];
 
 const FILLS = [1, 1, 0.92, 0.85, 0.78, 0.7, 0.62, 0.55, 0.45, 0.38, 0.3, 0.22, 0.15, 0.08];
@@ -386,6 +387,16 @@ const remaining = () => G.day.reqs.filter(r => !G.day.confirmed[r.id]).length;
 const reqOf = id => G.day.reqs.find(r => r.id === id);
 const CARRY_MAX = 4;
 const conOf = c => G.day.store[c.place][c.li].cons[c.bi];
+const selKey = e => e.t+":"+e.li+":"+e.bi;
+const carryKey = c => c.place+":"+c.li+":"+c.bi;
+// いま選んでいるものに対してできること
+function selAction(e){
+  if(!e) return null;
+  if(e.t==="box")  return G.day.opened[G.view.place+":"+e.li+":"+e.bi] ? "しめる" : "あける";
+  if(e.t==="con")  return carryIdx(G.view.place,e.li,e.bi)>=0 ? "たなに もどす" : "もつ";
+  if(e.t==="pile") return G.view.peek[e.li] ? "もどす" : "おくを みる";
+  return null;
+}
 const carryIdx = (place,li,bi) =>
   G.day.carry.findIndex(c=>c.place===place&&c.li===li&&c.bi===bi);
 
@@ -410,8 +421,8 @@ const ROOMS = {
     {id:"shelf",  prompt:"しらべる", x:58,  y:16,  w:58, h:42, zone:{x:54, y:58, w:66, h:20}},
     {id:"door_b", prompt:"でる",     x:130, y:14,  w:26, h:44, zone:{x:124,y:58, w:38, h:20}, label:"▶ バックヤード"},
     {id:"pc",     prompt:"つかう",   x:236, y:22,  w:52, h:36, zone:{x:230,y:58, w:64, h:20}, label:"パソコン"},
-    {id:"prep",   prompt:"しらべる", x:88,  y:96,  w:80, h:26, zone:{x:84, y:122,w:88, h:22}},
-    {id:"weighst",prompt:"はかる",   x:196, y:98,  w:52, h:24, zone:{x:192,y:122,w:60, h:22}, label:"はかりだい"},
+    {id:"prep",   prompt:"しらべる", x:84,  y:116, w:84, h:26, zone:{x:76, y:142,w:100,h:26}},
+    {id:"weighst",prompt:"はかる",   x:198, y:116, w:56, h:26, zone:{x:190,y:142,w:72, h:26}, label:"はかりだい"},
   ]},
   backyard: { name:"バックヤード", objects:[
     {id:"door_k",   prompt:"もどる",  x:16,  y:14, w:26, h:44, zone:{x:10, y:58, w:38, h:20}, label:"◀ ちゅうぼう"},
@@ -426,8 +437,8 @@ let stepPhase = 0;
 function nearObject(){
   for(const o of ROOMS[G.room].objects){
     const z=o.zone;
-    if(player.x+5 >= z.x && player.x+5 <= z.x+z.w &&
-       player.y+14 >= z.y-6 && player.y+14 <= z.y+z.h+24) return o;
+    if(player.x+5 >= z.x-6 && player.x+5 <= z.x+z.w+6 &&
+       player.y+14 >= z.y-14 && player.y+14 <= z.y+z.h+22) return o;
   }
   return null;
 }
@@ -449,12 +460,14 @@ function updateRoom(dt){
 
 /* ---------------------------------------------------------------- 保管場所をのぞく */
 function openPlace(placeId){
-  const boxes=[];
+  const sel=[];
   G.day.store[placeId].forEach((lot,li)=>{
-    if(lot.kind==="boxes") lot.boxes.forEach((_,bi)=>boxes.push({t:"box",li,bi}));
-    if(lot.kind==="weigh") lot.cons.forEach((_,bi)=>boxes.push({t:"weigh",li,bi}));
+    if(lot.kind==="boxes")      lot.boxes.forEach((_,bi)=>sel.push({t:"box",li,bi}));
+    else if(lot.kind==="weigh") lot.cons.forEach((_,bi)=>sel.push({t:"con",li,bi}));
+    else if(lot.kind==="pile")  sel.push({t:"pile",li,bi:0});
+    else                        sel.push({t:"look",li,bi:0});
   });
-  G.view = { place:placeId, boxes, cursor:0, scale:null, peek:false };
+  G.view = { place:placeId, sel, cursor:0, peek:{}, rects:{} };
   G.scene = "place";
   SFX.open();
 }
@@ -528,38 +541,42 @@ function onKey(key){
       if(o.id==="door_b"){ G.room="backyard"; player.x=36; player.y=112; SFX.door(); return; }
       if(o.id==="door_k"){ G.room="kitchen";  player.x=140; player.y=112; SFX.door(); return; }
       if(o.id==="pc"){ SFX.tick(); openPC(); return; }
-      if(o.id==="weighst"){ SFX.open(); G.scene="weighst"; return; }
+      if(o.id==="weighst"){ SFX.open(); G.ws={cursor:0,on:G.ws?G.ws.on:{}}; G.scene="weighst"; return; }
       openPlace(o.id);
       return;
     }
 
-    case "weighst":
+    case "weighst": {
+      const carry=G.day.carry;
       if(key==="x"||key==="Escape"){ SFX.close(); G.scene="room"; return; }
-      if(key==="z"){ if(G.day.carry.length){ G.day.carry.length=0; SFX.close(); } }
+      if(!carry.length) return;
+      if(key==="ArrowLeft"){  G.ws.cursor=(G.ws.cursor+carry.length-1)%carry.length; SFX.move(); return; }
+      if(key==="ArrowRight"){ G.ws.cursor=(G.ws.cursor+1)%carry.length; SFX.move(); return; }
+      if(key==="z"){
+        const k2=carryKey(carry[G.ws.cursor]);
+        G.ws.on[k2]=!G.ws.on[k2];
+        G.ws.on[k2]?SFX.open():SFX.close();
+      }
       return;
+    }
 
     case "place": {
-      const v=G.view;
-      if(key==="x"||key==="Escape"||key==="z" && v.boxes.length===0){ SFX.close(); G.scene="room"; return; }
-      if(key==="ArrowUp"||key==="ArrowDown"){     // 奥をのぞく
-        if(G.day.store[v.place].some(l=>l.kind==="pile")){ v.peek=!v.peek; SFX.open(); }
-        return;
+      const v=G.view, e=v.sel[v.cursor];
+      if(key==="x"||key==="Escape"){ SFX.close(); G.scene="room"; return; }
+      if(key==="ArrowLeft"){  v.cursor=(v.cursor+v.sel.length-1)%v.sel.length; SFX.move(); return; }
+      if(key==="ArrowRight"){ v.cursor=(v.cursor+1)%v.sel.length; SFX.move(); return; }
+      if(key!=="z" || !e) return;
+      if(e.t==="pile"){ v.peek[e.li]=!v.peek[e.li]; SFX.open(); }
+      else if(e.t==="box"){
+        const kk=v.place+":"+e.li+":"+e.bi;
+        G.day.opened[kk]=!G.day.opened[kk];
+        G.day.opened[kk]?SFX.open():SFX.close();
       }
-      if(v.boxes.length===0) return;
-      if(key==="ArrowLeft"){ v.cursor=clamp(v.cursor-1,0,v.boxes.length-1); SFX.move(); }
-      if(key==="ArrowRight"){ v.cursor=clamp(v.cursor+1,0,v.boxes.length-1); SFX.move(); }
-      if(key==="z"){
-        const b=v.boxes[v.cursor];
-        if(b.t==="weigh"){                      // 持っていく／棚にもどす
-          const ix=carryIdx(v.place,b.li,b.bi);
-          if(ix>=0){ G.day.carry.splice(ix,1); SFX.close(); }
-          else if(G.day.carry.length<CARRY_MAX){ G.day.carry.push({place:v.place,li:b.li,bi:b.bi}); SFX.open(); }
-          else SFX.warn();
-        } else {
-          const kk=v.place+":"+b.li+":"+b.bi;
-          G.day.opened[kk]=!G.day.opened[kk];
-          G.day.opened[kk]?SFX.open():SFX.close();
-        }
+      else if(e.t==="con"){
+        const ix=carryIdx(v.place,e.li,e.bi);
+        if(ix>=0){ G.day.carry.splice(ix,1); SFX.close(); }        // 取った場所でだけ もどせる
+        else if(G.day.carry.length<CARRY_MAX){ G.day.carry.push({place:v.place,li:e.li,bi:e.bi}); SFX.open(); }
+        else SFX.warn();
       }
       return;
     }
@@ -804,6 +821,7 @@ function drawPlace(){
       bold:true,align:"center"});
 
   const hasWeigh=lots.some(l=>l.kind==="weigh"), scaleH=0;
+  v.rects={};
 
   // 段に割り振る。1段に1〜2ロット置いて、縦にも横にも並ぶようにする
   const nLv = Math.min(3, Math.max(2, Math.ceil(lots.length/1.5)));
@@ -829,11 +847,24 @@ function drawPlace(){
     });
   });
 
-  const hints=[["X","とじる"]];
-  if(v.boxes.length) hints.unshift(["←→","えらぶ"],["Z",hasWeigh?"もつ／もどす":"あける"]);
-  if(lots.some(l=>l.kind==="pile")) hints.unshift(["↑↓", v.peek?"もどす":"おくを のぞく"]);
-  drawKeyHints(hints,H-34);
+  // いま選んでいるものを四角でかこみ、できることをボタンで出す
+  const e=v.sel[v.cursor], rc=e&&v.rects[selKey(e)];
+  if(rc){
+    ro(rc.x-6,rc.y-6,rc.w+12,rc.h+12,C.mikan[300],3);
+    const act=selAction(e);
+    if(act) drawActionButton(rc.x+rc.w/2, Math.max(44, rc.y-44), act);
+  }
+  drawKeyHints([["←→","えらぶ"],["X","とじる"]],H-34);
 }
+function drawActionButton(cx,y,label){
+  const kw=26, lw=tw(label,15,true), w=kw+lw+40, x=cx-w/2;
+  rr(x,y,w,32,"#0c0e16"); ro(x,y,w,32,C.mikan[300],3);
+  rr(x+10,y+7,kw,18,C.sumi[100]); ro(x+10,y+7,kw,18,C.sumi[500],2);
+  txt("Z",x+10+kw/2,y+10,{size:14,color:C.sumi[900],bold:true,align:"center"});
+  txt(label,x+10+kw+12,y+9,{size:15,color:C.mikan[300],bold:true});
+}
+function mark(v,key,x,y,w,h){ v.rects[key]={x:Math.round(x),y:Math.round(y),w:Math.round(w),h:Math.round(h)}; }
+
 function drawLot(lot,item,sx,sw,base,li,v,availH){
   if(lot.kind==="pieces"||lot.kind==="frozen"){
     const n=lot.pieces;
@@ -855,13 +886,14 @@ function drawLot(lot,item,sx,sw,base,li,v,availH){
         else drawBag(x,y,bw2,bh2,item.color,lot.kind==="frozen");
       }
     }
+    mark(v,"look:"+li+":0",sx+ox-6,base-bh2-(rows-1)*18-8,clusterW+12,bh2+(rows-1)*18+12);
   } else if(lot.kind==="pile"){
     const n=lot.pieces;
     const crateW=Math.min(sw-10,Math.max(170,n*16+70)), crateX=sx+(sw-crateW)/2;
     const crateH=Math.min(34,Math.round(availH*0.3));
     let d=Math.round(item.shape==="ellipse"?Math.min(48,crateW/5.2):Math.min(42,crateW/5.6));
     let dh=Math.round(item.shape==="ellipse"?d*0.72:(item.shape==="pepper"?d*1.25:d));
-    const lift=v.peek?Math.round(dh*0.62):Math.round(dh*0.17);   // 奥をのぞくと持ち上がって見える
+    const lift=v.peek[li]?Math.round(dh*0.62):Math.round(dh*0.17);   // 奥を見ると持ち上がって見える
     for(let L=2;L>=0;L--){
       for(let i=0;i<n;i++){
         if(lot.layer[i]!==L) continue;
@@ -876,6 +908,7 @@ function drawLot(lot,item,sx,sw,base,li,v,availH){
     rr(crateX+2,base-crateH+2,crateW-4,crateH-4,"#79828f");
     for(let i=0;i<5;i++) rr(crateX+8+i*((crateW-16)/5),base-crateH+6,4,crateH-12,"#5e6672");
     ro(crateX,base-crateH,crateW,crateH,"#434a54",2);
+    mark(v,"pile:"+li+":0",crateX,base-crateH-Math.round(dh*2.4),crateW,crateH+Math.round(dh*2.4));
   } else if(lot.kind==="liquid"){
     const n=lot.cans.length;
     let bh2=Math.min(100,availH-4), bw2=Math.round(bh2*0.52);
@@ -886,6 +919,7 @@ function drawLot(lot,item,sx,sw,base,li,v,availH){
     }
     const ox=(sw-((n-1)*step+bw2))/2;
     lot.cans.forEach((f,i)=>drawBottle(sx+ox+i*step+Math.round((jit(li+i,2)-0.5)*8),base-bh2,bw2,bh2,f,lot.canSize));
+    mark(v,"look:"+li+":0",sx+ox-8,base-bh2-14,(n-1)*step+bw2+16,bh2+18);
   } else if(lot.kind==="boxes"){
     const n=lot.boxes.length;
     const rows=n>3?2:1, cols=Math.ceil(n/rows);
@@ -900,13 +934,7 @@ function drawLot(lot,item,sx,sw,base,li,v,availH){
         const x=sx+ox+c*step+(r===1?Math.round(step*0.3):0), y=base-bh2-r*16;
         const open=!!G.day.opened[v.place+":"+li+":"+bi];
         drawBox(x,y,bw2,bh2,open,lot.boxes[bi],item.color);
-        const cur=v.boxes[v.cursor];
-        if(cur && cur.t==="box" && cur.li===li && cur.bi===bi){
-          ro(x-5,y-20,bw2+10,bh2+26,C.mikan[300],3);
-          ctx.fillStyle=C.mikan[300]; ctx.beginPath();
-          ctx.moveTo(x+bw2/2-8,y-31); ctx.lineTo(x+bw2/2+8,y-31);
-          ctx.lineTo(x+bw2/2,y-22); ctx.closePath(); ctx.fill();
-        }
+        mark(v,"box:"+li+":"+bi,x,y,bw2,bh2);
       }
     }
   } else if(lot.kind==="weigh"){
@@ -917,15 +945,11 @@ function drawLot(lot,item,sx,sw,base,li,v,availH){
     lot.cons.forEach((c,ci)=>{
       const x=sx+ox+ci*step, y=base-bh2;
       const held=carryIdx(v.place,li,ci)>=0;
-      if(held){ rr(x,base-6,bw2,6,"rgba(0,0,0,0.35)"); }   // 持ち出し中は すき間になる
-      else drawBowl(x,y,bw2,bh2,item.color,c.tare,false);
-      const cur=v.boxes[v.cursor];
-      if(cur && cur.t==="weigh" && cur.li===li && cur.bi===ci){
-        ro(x-5,y-20,bw2+10,bh2+26,C.mikan[300],3);
-        ctx.fillStyle=C.mikan[300]; ctx.beginPath();
-        ctx.moveTo(x+bw2/2-8,y-31); ctx.lineTo(x+bw2/2+8,y-31);
-        ctx.lineTo(x+bw2/2,y-22); ctx.closePath(); ctx.fill();
-      }
+      if(held){                                   // 持ち出し中は あとが残る
+        rr(x,base-7,bw2,7,"rgba(0,0,0,0.42)");
+        txt("もちだし中",x+bw2/2,base-26,{size:12,color:C.sumi[600],align:"center"});
+      } else drawBowl(x,y,bw2,bh2,item.color,c.tare,false);
+      mark(v,"con:"+li+":"+ci,x,held?base-30:y,bw2,held?30:bh2);
     });
   } else if(lot.kind==="vats"){
     // 寸胴は「何バット分か」に見合う大きさにする（面積が容量に比例するよう √倍）
@@ -943,6 +967,7 @@ function drawLot(lot,item,sx,sw,base,li,v,availH){
     const ox=(sw-total)/2;
     lot.vats.forEach((f,i)=>drawVat(sx+ox+i*(vw+10),base-vh,vw,vh,f));
     drawPot(sx+ox+n*(vw+10),base-ph,pw,ph,lot.potFill,lot.potSize);
+    mark(v,"look:"+li+":0",sx+ox-6,base-ph-6,total+12,ph+12);
   }
 }
 const comma=v=>String(v).replace(/\B(?=(\d{3})+(?!\d))/g,",");
@@ -1075,42 +1100,59 @@ function drawPot(x,y,w,h,fill,size){
 function drawWeighStation(){
   rr(0,0,W,H,"#14171e");
   drawFloor(0,AH,"#4e545e","#464c56","#3a3f48");
-  rr(0,0,W,H,"rgba(10,12,18,0.55)");
-  txt("はかりだい",W/2,44,{size:19,color:C.wasabi[300],bold:true,align:"center"});
+  rr(0,0,W,H,"rgba(10,12,18,0.58)");
+  txt("はかりだい",W/2,30,{size:19,color:C.wasabi[300],bold:true,align:"center"});
 
   const carry=G.day.carry;
-  let gross=0, tare=0;
-  carry.forEach(c=>{ const o=conOf(c); gross+=o.net+o.tare; tare+=o.tare; });
+  if(!G.ws) G.ws={cursor:0,on:{}};
+  if(!carry.length){
+    txt("なにも 持っていない。",W/2,210,{size:21,color:C.sumi[400],align:"center"});
+    drawKeyHints([["X","もどる"]],H-34);
+    return;
+  }
+  G.ws.cursor=clamp(G.ws.cursor,0,carry.length-1);
 
-  // 台に載せたもの
-  const plateY=330, bw2=120, bh2=42, gap=10;
-  const totalW=carry.length?carry.length*(bw2+gap)-gap:0, ox=(W-totalW)/2;
+  // 持っているもの（ここから のせるものを えらぶ）
+  txt("もっているもの",60,76,{size:15,color:C.sumi[500]});
+  const cw=180, cg=16, cx0=(W-(carry.length*(cw+cg)-cg))/2;
   carry.forEach((c,i)=>{
     const lot=G.day.store[c.place][c.li];
-    const item=CATALOG.find(x=>x.id===lot.itemId);
-    const o=conOf(c);
-    drawBowl(ox+i*(bw2+gap),plateY-bh2,bw2,bh2,item.color,o.tare,false);
-    txt(item.name,ox+i*(bw2+gap)+bw2/2,plateY-bh2-20,
-        {size:14,color:C.sumi[300],align:"center"});
+    const item=CATALOG.find(x=>x.id===lot.itemId), o=conOf(c);
+    const x=cx0+i*(cw+cg), y=104, on=!!G.ws.on[carryKey(c)];
+    rr(x,y,cw,86, on?"#13261f":"#1a1e28"); ro(x,y,cw,86, on?C.wasabi[500]:"#333a46",2);
+    drawBowl(x+20,y+14,cw-40,38,item.color,o.tare,false);
+    txt(item.name,x+cw/2,y+60,{size:14,color:C.sumi[300],align:"center"});
+    if(on) txt("のせた",x+cw-14,y+6,{size:12,color:C.wasabi[300],bold:true,align:"right"});
+    if(i===G.ws.cursor){
+      ro(x-6,y-6,cw+12,98,C.mikan[300],3);
+      drawActionButton(x+cw/2, y+104, on?"はかりから おろす":"はかりに のせる");
+    }
   });
 
   // はかり本体
-  const w=620,h=118,x=(W-w)/2,y=plateY;
+  const on=carry.filter(c=>G.ws.on[carryKey(c)]);
+  let gross=0, tare=0;
+  on.forEach(c=>{ const o=conOf(c); gross+=o.net+o.tare; tare+=o.tare; });
+
+  const plateY=400, bw2=112, bh2=36, gap=8;
+  const totalW=on.length?on.length*(bw2+gap)-gap:0, ox=(W-totalW)/2;
+  on.forEach((c,i)=>{
+    const lot=G.day.store[c.place][c.li];
+    const item=CATALOG.find(x=>x.id===lot.itemId);
+    drawBowl(ox+i*(bw2+gap),plateY-bh2,bw2,bh2,item.color,conOf(c).tare,false);
+  });
+  const w=620,h=96,x=(W-w)/2,y=plateY;
   rr(x+16,y,w-32,12,"#c6ccd6"); ro(x+16,y,w-32,12,"#878d96",2);
   rr(x,y+12,w,h-12,"#aeb4be"); rr(x,y+12,w,5,"#ced4de");
-  rr(x+20,y+30,96,28,"#8e949e");
-  txt("はかり",x+68,y+35,{size:15,color:"#2c3038",align:"center"});
-  rr(x+w-290,y+26,268,46,"#0d1a14"); ro(x+w-290,y+26,268,46,"#27382f",2);
-  txt(carry.length?comma(gross)+" g":"- - - - g",x+w-38,y+36,
-      {size:30,color:"#6cf0a8",bold:true,align:"right"});
+  rr(x+20,y+28,96,26,"#8e949e");
+  txt("はかり",x+68,y+32,{size:15,color:"#2c3038",align:"center"});
+  rr(x+w-290,y+24,268,44,"#0d1a14"); ro(x+w-290,y+24,268,44,"#27382f",2);
+  txt(on.length?comma(gross)+" g":"- - - - g",x+w-38,y+33,
+      {size:29,color:"#6cf0a8",bold:true,align:"right"});
+  if(on.length) txt("風袋のごうけい "+comma(tare)+"g",x+w-38,y+72,
+      {size:14,color:C.sumi[700],align:"right"});
 
-  if(carry.length){
-    txt("のせたもの "+carry.length+"こ　／　風袋のごうけい "+comma(tare)+"g",
-        W/2,y+h+14,{size:15,color:C.sumi[400],align:"center"});
-  }
-  const hints=[["X","もどる"]];
-  if(carry.length) hints.push(["Z","ぜんぶ おろす"]);
-  drawKeyHints(hints,H-34);
+  drawKeyHints([["←→","えらぶ"],["X","もどる"]],H-34);
 }
 
 /* ---- パソコン ---- */
