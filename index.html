@@ -274,7 +274,13 @@ function makeLot(item){
     lot.cans = [];
     const n = ri(2, 4);
     for(let i=0;i<n;i++) lot.cans.push(1);          // 未開封は満タン
-    lot.cans[Math.floor(RND()*n)] = pick(PART);     // 開封ずみは1本だけ
+    // 開封ずみは1本だけ。入力が0.5刻みなので、合計が0.5の倍数になる残量にする
+    const full = (n-1)*lot.canSize;
+    const lo = Math.ceil((full + 0.10*lot.canSize)*2)/2;
+    const hi = Math.floor((full + 0.95*lot.canSize)*2)/2;
+    const want = Math.round((full + pick(PART)*lot.canSize)*2)/2;
+    const target = Math.min(Math.max(want, lo), hi);
+    lot.cans[Math.floor(RND()*n)] = (target - full)/lot.canSize;
   } else if(item.kind==="boxes"){
     lot.boxes = [];
     const n = ri(2, 4), full = ri(5, 9);
@@ -386,11 +392,14 @@ function buildRequests(store, used){
     // システムの理論在庫。たまに当たっている（＝スキップしても正解になる）
     const r = RND();
     let theo;
-    if(r < 0.25)      theo = Math.round(expected);
+    if(r < 0.25)      theo = expected;                                           // たまたま合っている
     else if(r < 0.62) theo = Math.max(1, Math.round(expected * (1.6 + RND()*1.0)));
     else              theo = Math.max(1, Math.round(expected * (0.22 + RND()*0.32)));
 
-    if(unit==="g") theo = Math.max(100, Math.round(theo/100)*100);
+    // はじめの数字も、入力の刻みに合わせておく。
+    // そうしないと ＋－を何回おしても 正解にたどりつけない
+    const st = (unit==="g") ? 100 : (it.kind==="liquid") ? 0.5 : 1;
+    theo = Math.max(st, Math.round(theo/st)*st);
     return { id, name:it.name, unit, color:it.color, kind:it.kind,
              places:used[id].slice(), expected, delivery, theo };
   });
