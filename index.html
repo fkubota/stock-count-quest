@@ -342,13 +342,6 @@ function buildStore(){
     store[p2].push(makeLot(it));
     used[id].push(p2);
   }
-  // 山積みの野菜は、その日によって「玉」ではなく「g」で聞かれる。
-  // 見た目も できることも変わらないので、パソコンの前に立つまで分からない
-  for(const id in used){
-    const it = CATALOG.find(x=>x.id===id);
-    if(it.kind!=="pile" || RND()>=0.35) continue;
-    for(const p of used[id]) for(const lot of store[p]) if(lot.itemId===id) lot.weighMode = true;
-  }
   return { store, used };
 }
 
@@ -360,6 +353,19 @@ function buildRequests(store, used){
   const chosen = [];
   if(multi.length) chosen.push(multi[0]);
   for(const id of ids){ if(chosen.length>=4) break; if(chosen.indexOf(id)<0) chosen.push(id); }
+
+  // 今日のぶんに かならず1件、「数えられるのに g で聞かれる」山積みを混ぜる。
+  // 見た目も、持てるかどうかも変わらないので、パソコンの前に立つまで分からない。
+  // ときどき出るくらいに戻したいときは、ここを RND() で間引く
+  const piles = ids.filter(id => CATALOG.find(x=>x.id===id).kind==="pile");
+  let weighId = piles.find(id => chosen.indexOf(id)>=0);
+  if(!weighId && piles.length){
+    weighId = piles[0];
+    if(chosen.length>=4) chosen[chosen.length-1] = weighId;   // 1枠だけ入れ替える
+    else chosen.push(weighId);
+  }
+  if(weighId) for(const p of used[weighId]) for(const lot of store[p])
+    if(lot.itemId===weighId) lot.weighMode = true;
 
   const deliveryId = pick(chosen.filter(id=>{
     const k = CATALOG.find(x=>x.id===id).kind;
