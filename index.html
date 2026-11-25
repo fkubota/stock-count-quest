@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>在庫カウントクエスト</title>
+<link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAbklEQVR42mNgIBFISCn9x4cZaA3o5gBcFnz5+AwvpprD6O4AUi0iFRN00KBxALUtxuWQweMAelmM0yGjDhhwB4zmgtGSkF5RQXKlNOqAAXfAoROXqIqHrgMqm/opwqMOGPoOGLm5gFZ48DtgxAEA2gicsbQOpOUAAAAASUVORK5CYII=">
+<!-- コック帽。32x32のドット絵を そのまま埋めてある（外部ファイルにしない） -->
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -29,7 +31,7 @@
 <body>
 <div id="wrap">
   <canvas id="g" width="960" height="540" tabindex="0"></canvas>
-  <p id="hint">↑↓←→ いどう ／ Z しらべる ／ X もどる ／ Enter かくてい ／ B 音</p>
+  <p id="hint">↑↓←→ いどう ／ Z しらべる・おくを みる ／ C もつ・のせる ／ X もどる ／ Enter かくてい ／ B 音</p>
 </div>
 
 <script>
@@ -241,7 +243,11 @@ const VESSEL = {
   tupper:{ cap:[800,1400,2000],     tare:[180,320,460],      slots:1 },
   vat:   { cap:[1600,2400,3200],    tare:[600,820,1050],     slots:1 },
   pot:   { cap:[6000,9000,12000],   tare:[2400,3000,3600],   slots:2 },
+  // 野菜は容器に入れず、抱えて運ぶ。何玉あっても一度に持てる
+  veg:   { cap:[0,0,0],             tare:[0,0,0],            slots:1 },
 };
+// 野菜 1個ぶんの、だいたいの重さ。ここから個体差をつけるので、数えて掛け算しても当たらない
+const PIECE_G = { cabbage:1150, onion:210, pepper:35, tomato:180, jagaimo:140 };
 function makeCon(shape,size,fill){
   const V=VESSEL[shape];
   return { shape, size, tare:V.tare[size], fill,
@@ -252,11 +258,17 @@ function makeCon(shape,size,fill){
 function makeLot(item){
   const lot = { itemId:item.id, kind:item.kind };
   if(item.kind==="pile"){
-    lot.pieces = ri(7, 16);
+    lot.pieces = ri(6, 14);
     lot.layer = [];
     for(let i=0;i<lot.pieces;i++) lot.layer.push(i<Math.ceil(lot.pieces*0.45)?0:(i<Math.ceil(lot.pieces*0.78)?1:2));
+    // 野菜はいつでも抱えて はかり台へ持っていける。
+    // 今日の単位が「個」なら、持っていっても ただの無駄骨になる
+    let sum=0;
+    for(let i=0;i<lot.pieces;i++) sum += PIECE_G[item.id]*(0.78+RND()*0.44);   // 1個ずつ重さがちがう
+    lot.cons = [{ shape:"veg", size:0, tare:0, fill:1,
+                  net: Math.max(100, Math.round(sum/100)*100) }];
   } else if(item.kind==="pieces" || item.kind==="frozen"){
-    lot.pieces = ri(3, 11);
+    lot.pieces = ri(3, 10);
   } else if(item.kind==="liquid"){
     lot.canSize = pick([4, 4, 1.8]);
     lot.cans = [];
@@ -286,6 +298,7 @@ function makeLot(item){
   return lot;
 }
 function lotAmount(lot){
+  if(lot.weighMode) return lot.cons[0].net;
   if(lot.kind==="pieces"||lot.kind==="frozen"||lot.kind==="pile") return lot.pieces;
   if(lot.kind==="liquid") return lot.cans.reduce((a,b)=>a+b,0) * lot.canSize;
   if(lot.kind==="boxes")  return lot.boxes.reduce((a,b)=>a+b,0);
@@ -329,11 +342,17 @@ function buildStore(){
     store[p2].push(makeLot(it));
     used[id].push(p2);
   }
+  // 山積みの野菜は、その日によって「玉」ではなく「g」で聞かれる。
+  // 見た目も できることも変わらないので、パソコンの前に立つまで分からない
+  for(const id in used){
+    const it = CATALOG.find(x=>x.id===id);
+    if(it.kind!=="pile" || RND()>=0.35) continue;
+    for(const p of used[id]) for(const lot of store[p]) if(lot.itemId===id) lot.weighMode = true;
+  }
   return { store, used };
 }
 
 /* --- その日のカウント依頼をつくる --- */
-const REASONS = ["定期カウント","在庫がマイナス","初回カウント","発注とのズレ"];
 function buildRequests(store, used){
   const ids = shuffled(Object.keys(used));
   // 2か所に分かれているものを必ず1つは混ぜる
@@ -349,8 +368,12 @@ function buildRequests(store, used){
 
   return chosen.map(id => {
     const it = CATALOG.find(x=>x.id===id);
-    let base = 0;
-    for(const p of used[id]) for(const lot of store[p]) if(lot.itemId===id) base += lotAmount(lot);
+    let base = 0, weighed = false;
+    for(const p of used[id]) for(const lot of store[p]) if(lot.itemId===id){
+      base += lotAmount(lot);
+      if(lot.weighMode) weighed = true;
+    }
+    const unit = weighed ? "g" : it.unit;
     const delivery = (id===deliveryId) ? ri(1,3) : 0;
     const expected = Math.round((base + delivery)*10)/10;
 
@@ -361,10 +384,9 @@ function buildRequests(store, used){
     else if(r < 0.62) theo = Math.max(1, Math.round(expected * (1.6 + RND()*1.0)));
     else              theo = Math.max(1, Math.round(expected * (0.22 + RND()*0.32)));
 
-    if(it.unit==="g") theo = Math.max(100, Math.round(theo/100)*100);
-    return { id, name:it.name, unit:it.unit, color:it.color, kind:it.kind,
-             places:used[id].slice(), expected, delivery, theo,
-             reason: it.vessel==="pot" ? "仕掛品のため毎回" : pick(REASONS) };
+    if(unit==="g") theo = Math.max(100, Math.round(theo/100)*100);
+    return { id, name:it.name, unit, color:it.color, kind:it.kind,
+             places:used[id].slice(), expected, delivery, theo };
   });
 }
 
@@ -406,11 +428,25 @@ function moveCursor(v,dx,dy){
   });
   if(best>=0){ v.cursor=best; SFX.move(); }
 }
-function selAction(e){
+// Z は「見る」系、C は「持つ・のせる」系。同じものに両方あることがあるのでキーを分けた
+function actionZ(e){
   if(!e) return null;
   if(e.t==="box")  return G.day.opened[G.view.place+":"+e.li+":"+e.bi] ? "しめる" : "あける";
-  if(e.t==="con")  return carryIdx(G.view.place,e.li,e.bi)>=0 ? "たなに もどす" : "もつ";
-  if(e.t==="pile") return G.view.peek[e.li] ? "もどす" : "おくを みる";
+  if(e.t==="pile"){
+    if(carryIdx(G.view.place,e.li,0)>=0) return null;    // 抱えて持ち出し中は 見るものがない
+    return G.view.peek[e.li] ? "もどす" : "おくを みる";
+  }
+  if(e.t==="look" && e.peek) return G.view.peek[e.li] ? "もどす" : "おくを みる";
+  return null;
+}
+function actionC(e){
+  if(!e) return null;
+  // 野菜はいつでも持てる。持てるかどうかで その日の単位がバレないようにする
+  if(e.t==="con" || e.t==="pile"){
+    if(carryIdx(G.view.place,e.li,e.bi)>=0) return "たなに もどす";
+    const need=VESSEL[G.day.store[G.view.place][e.li].cons[e.bi].shape].slots;
+    return carryUsed()+need<=CARRY_MAX ? "もつ" : "手が いっぱい";
+  }
   return null;
 }
 const carryIdx = (place,li,bi) =>
@@ -481,7 +517,8 @@ function openPlace(placeId){
     if(lot.kind==="boxes")      lot.boxes.forEach((_,bi)=>sel.push({t:"box",li,bi}));
     else if(lot.kind==="weigh") lot.cons.forEach((_,bi)=>sel.push({t:"con",li,bi}));
     else if(lot.kind==="pile")  sel.push({t:"pile",li,bi:0});
-    else                        sel.push({t:"look",li,bi:0});
+    // 目で数えるものは、奥の列を持ち上げて見られる。瓶は重なっていないので対象外
+    else sel.push({t:"look",li,bi:0,peek:(lot.kind==="pieces"||lot.kind==="frozen")});
   });
   G.view = { place:placeId, sel, cursor:0, peek:{}, rects:{} };
   G.scene = "place";
@@ -586,7 +623,7 @@ function onKey(key){
       if(!carry.length) return;
       if(key==="ArrowLeft"){  G.ws.cursor=(G.ws.cursor+carry.length-1)%carry.length; SFX.move(); return; }
       if(key==="ArrowRight"){ G.ws.cursor=(G.ws.cursor+1)%carry.length; SFX.move(); return; }
-      if(key==="z"){
+      if(key==="c"){
         const k2=carryKey(carry[G.ws.cursor]);
         G.ws.on[k2]=!G.ws.on[k2];
         G.ws.on[k2]?SFX.open():SFX.close();
@@ -601,14 +638,16 @@ function onKey(key){
       if(key==="ArrowRight"){ moveCursor(v, 1,0); return; }
       if(key==="ArrowUp"){    moveCursor(v, 0,-1); return; }
       if(key==="ArrowDown"){  moveCursor(v, 0, 1); return; }
-      if(key!=="z" || !e) return;
-      if(e.t==="pile"){ v.peek[e.li]=!v.peek[e.li]; SFX.open(); }
-      else if(e.t==="box"){
-        const kk=v.place+":"+e.li+":"+e.bi;
-        G.day.opened[kk]=!G.day.opened[kk];
-        G.day.opened[kk]?SFX.open():SFX.close();
+      if(!e) return;
+      if(key==="z"){
+        if(e.t==="pile" || (e.t==="look" && e.peek)){ v.peek[e.li]=!v.peek[e.li]; SFX.open(); }
+        else if(e.t==="box"){
+          const kk=v.place+":"+e.li+":"+e.bi;
+          G.day.opened[kk]=!G.day.opened[kk];
+          G.day.opened[kk]?SFX.open():SFX.close();
+        }
       }
-      else if(e.t==="con"){
+      else if(key==="c" && actionC(e)){
         const ix=carryIdx(v.place,e.li,e.bi);
         if(ix>=0){ G.day.carry.splice(ix,1); SFX.close(); }        // 取った場所でだけ もどせる
         else {
@@ -883,16 +922,19 @@ function drawPlace(){
   const e=v.sel[v.cursor], rc=e&&v.rects[selKey(e)];
   if(rc){
     ro(rc.x-6,rc.y-6,rc.w+12,rc.h+12,C.mikan[300],3);
-    const act=selAction(e);
-    if(act) drawActionButton(rc.x+rc.w/2, Math.max(44, rc.y-44), act);
+    const acts=[["Z",actionZ(e)],["C",actionC(e)]].filter(a=>a[1]);
+    const ws=acts.map(a=>buttonW(a[1])), total=ws.reduce((a,b)=>a+b,0)+(acts.length-1)*10;
+    let run=rc.x+rc.w/2-total/2;
+    acts.forEach((a,i)=>{ drawActionButton(run+ws[i]/2, Math.max(44, rc.y-44), a[1], a[0]); run+=ws[i]+10; });
   }
   drawKeyHints([["↑↓←→","えらぶ"],["X","とじる"]],H-34);
 }
-function drawActionButton(cx,y,label){
-  const kw=26, lw=tw(label,15,true), w=kw+lw+40, x=cx-w/2;
+const buttonW = label => 26+tw(label,15,true)+40;
+function drawActionButton(cx,y,label,key){
+  const kw=26, w=buttonW(label), x=cx-w/2;
   rr(x,y,w,32,"#0c0e16"); ro(x,y,w,32,C.mikan[300],3);
   rr(x+10,y+7,kw,18,C.sumi[100]); ro(x+10,y+7,kw,18,C.sumi[500],2);
-  txt("Z",x+10+kw/2,y+10,{size:14,color:C.sumi[900],bold:true,align:"center"});
+  txt(key||"Z",x+10+kw/2,y+10,{size:14,color:C.sumi[900],bold:true,align:"center"});
   txt(label,x+10+kw+12,y+9,{size:15,color:C.mikan[300],bold:true});
 }
 function mark(v,key,x,y,w,h){ v.rects[key]={x:Math.round(x),y:Math.round(y),w:Math.round(w),h:Math.round(h)}; }
@@ -900,39 +942,68 @@ function mark(v,key,x,y,w,h){ v.rects[key]={x:Math.round(x),y:Math.round(y),w:Ma
 function drawLot(lot,item,sx,sw,base,li,v,availH){
   if(lot.kind==="pieces"||lot.kind==="frozen"){
     const n=lot.pieces;
-    const rows=n>4?2:1, cols=Math.ceil(n/rows);
-    let bw2=Math.min(64,Math.floor((sw-10)/(cols*0.88+0.2)));
+    const rows=n>5?2:1, cols=Math.ceil(n/rows);
+    // 同じ列のなかでは かさねない。入りきらないときは小さくする
+    let bw2=Math.max(10,Math.min(64,Math.floor((sw-12)/(cols+(rows>1?0.5:0)))-5));
     let bh2=Math.round(bw2*1.35);
-    const need=bh2+(rows-1)*18;
-    if(need>availH){ const kk=availH/need; bw2=Math.max(10,Math.floor(bw2*kk)); bh2=Math.round(bh2*kk); }
-    const step=Math.max(8,Math.round(bw2*0.86));
-    const clusterW=(cols-1)*step+bw2, ox=(sw-clusterW)/2;
+    // 奥の列は、ふだんでも上半分が見える。奥を見ると ほとんど丸ごと見える
+    const need=bh2+(rows-1)*Math.round(bh2*0.95);    // 持ち上げた状態でも段に収まる大きさにする
+    if(need>availH){
+      const kk=availH/need;
+      bw2=Math.max(10,Math.floor(bw2*kk)); bh2=Math.round(bw2*1.35);
+    }
+    const lift=Math.round(bh2*(v.peek[li]?0.95:0.52));
+    const step=bw2+5, back=rows>1?Math.round(step*0.5):0;
+    const clusterW=(cols-1)*step+bw2+back, ox=(sw-clusterW)/2;
     for(let r=rows-1;r>=0;r--){          // 奥の列から描いて、手前が重なるようにする
       for(let c=0;c<cols;c++){
         const i=r*cols+c; if(i>=n) continue;
-        const jx=Math.round((jit(li*7+i,3)-0.5)*step*0.34);
-        const jy=Math.round((jit(li*11+i,5)-0.5)*5);
-        const x=sx+ox+c*step+jx+(r===1?Math.round(step*0.42):0);
-        const y=base-bh2-r*18+jy;
+        if(DBG_SKIP===i) continue;
+        const jy=Math.round((jit(li*11+i,5)-0.5)*4);
+        const x=sx+ox+c*step+(r?back:0);
+        const y=base-bh2-r*lift+jy;
         if(item.shape==="carton") drawCarton(x,y,bw2,bh2,item.color);
         else drawBag(x,y,bw2,bh2,item.color,lot.kind==="frozen");
       }
     }
-    mark(v,"look:"+li+":0",sx+ox-6,base-bh2-(rows-1)*18-8,clusterW+12,bh2+(rows-1)*18+12);
+    mark(v,"look:"+li+":0",sx+ox-6,base-bh2-(rows-1)*lift-8,clusterW+12,bh2+(rows-1)*lift+12);
   } else if(lot.kind==="pile"){
     const n=lot.pieces;
     const crateW=Math.min(sw-10,Math.max(170,n*16+70)), crateX=sx+(sw-crateW)/2;
     const crateH=Math.min(34,Math.round(availH*0.3));
-    let d=Math.round(item.shape==="ellipse"?Math.min(48,crateW/5.2):Math.min(42,crateW/5.6));
+    if(carryIdx(v.place,li,0)>=0){                      // 抱えて持ち出している
+      rr(crateX,base-crateH,crateW,crateH,"#5e6672");
+      rr(crateX+2,base-crateH+2,crateW-4,crateH-4,"#79828f");
+      ro(crateX,base-crateH,crateW,crateH,"#434a54",2);
+      txt("もちだし中",crateX+crateW/2,base-crateH-20,{size:12,color:C.sumi[600],align:"center"});
+      mark(v,"pile:"+li+":0",crateX,base-crateH-24,crateW,crateH+24);
+      return;
+    }
+    // 層ごとに レーンを割りあてて、同じ層のなかでは かさならないようにする
+    const inL=[0,0,0];
+    for(let i=0;i<n;i++) inL[lot.layer[i]]++;
+    const widest=Math.max(1,inL[0],inL[1],inL[2]);
+    const lane=(crateW-20)/widest;
+    let d=Math.max(8,Math.round(Math.min(item.shape==="ellipse"?48:42, lane-6)));
     let dh=Math.round(item.shape==="ellipse"?d*0.72:(item.shape==="pepper"?d*1.25:d));
-    const lift=v.peek[li]?Math.round(dh*0.62):Math.round(dh*0.17);   // 奥を見ると持ち上がって見える
+    // 奥の層は ふだんでも半分ちかく見える。持ち上げた状態でも段に収まる大きさにする
+    if(crateH+2*Math.round(dh*0.78)+dh>availH){
+      const kk=Math.max(0.3,(availH-crateH)/(2*Math.round(dh*0.78)+dh));
+      d=Math.max(8,Math.round(d*kk)); dh=Math.max(8,Math.round(dh*kk));
+    }
+    const lift=Math.round(dh*(v.peek[li]?0.78:0.46));
+    const seen=[0,0,0];
     for(let L=2;L>=0;L--){
       for(let i=0;i<n;i++){
         if(lot.layer[i]!==L) continue;
-        const sz=1+(jit(li*13+i,9)-0.5)*0.22;
+        const kk=seen[L]++;
+        if(DBG_SKIP===i) continue;
+        const sz=1+(jit(li*13+i,9)-0.5)*0.14;
         const ww=Math.round(d*sz), hh=Math.round(dh*sz);
-        const x=crateX+12+Math.round(jit(li*5+i,1)*(crateW-24-ww));
-        const y=base-crateH+6-hh-L*lift-Math.round(jit(li*3+i,7)*4);
+        const slot=(crateW-20)/inL[L];
+        const jx=Math.round((jit(li*5+i,1)-0.5)*Math.max(0,slot-ww-2));
+        const x=crateX+10+Math.round(kk*slot+(slot-ww)/2)+jx;
+        const y=base-crateH+6-hh-L*lift-Math.round(jit(li*3+i,7)*2);
         drawVeg(item.shape,x,y,ww,hh,item.color);
       }
     }
@@ -940,7 +1011,7 @@ function drawLot(lot,item,sx,sw,base,li,v,availH){
     rr(crateX+2,base-crateH+2,crateW-4,crateH-4,"#79828f");
     for(let i=0;i<5;i++) rr(crateX+8+i*((crateW-16)/5),base-crateH+6,4,crateH-12,"#5e6672");
     ro(crateX,base-crateH,crateW,crateH,"#434a54",2);
-    mark(v,"pile:"+li+":0",crateX,base-crateH-Math.round(dh*2.4),crateW,crateH+Math.round(dh*2.4));
+    mark(v,"pile:"+li+":0",crateX,base-crateH+6-dh-2*lift-4,crateW,crateH+2*lift+dh+10);
   } else if(lot.kind==="liquid"){
     const n=lot.cans.length;
     let bh2=Math.min(100,availH-4), bw2=Math.round(bh2*0.52);
@@ -1011,6 +1082,8 @@ function drawBowl(x,y,w,h,col,tare,onScale){
   }
   if(onScale) ro(x-5,y-5,w+10,h+10,"#6cf0a8",3);
 }
+// 重なりの検証用。ここに番号を入れると、その1個だけを描かずに飛ばす
+let DBG_SKIP=-1;
 // 位置や大きさを不ぞろいにするための、決まった値を返すゆらぎ
 const jit=(a,b)=>{ const v=Math.sin(a*12.9898+b*78.233)*43758.5453; return v-Math.floor(v); };
 // よこ方向の幅の変化を帯で積んで、丸いものをドット絵らしく描く
@@ -1131,7 +1204,17 @@ function drawPot(x,y,w,h,fill,tare,col){
     txt("空のとき "+comma(tare)+"g",x+w/2,y-17,{size:11,color:"#2c2c30",bold:true,align:"center"});
   }
 }
-
+// 抱えてきた野菜。容器がないので、はかりの上では そのまま積まれる
+function drawVegHeap(x,y,w,h,col,shape,n){
+  const cols=Math.min(n,Math.max(3,Math.round(Math.sqrt(n*1.8))));
+  const d=Math.max(7,Math.min(Math.floor((w-6)/cols), Math.floor(h/1.9)));
+  const rows=Math.ceil(n/cols);
+  for(let r=rows-1;r>=0;r--){
+    const inR=Math.min(cols,n-r*cols), cw=inR*d, ox=(w-cw)/2;
+    for(let c=0;c<inR;c++)
+      drawVeg(shape||"round",x+ox+c*d,y+h-d-r*Math.round(d*0.52),d,d,col);
+  }
+}
 
 /* ---- はかりだい ---- */
 function drawWeighStation(){
@@ -1159,13 +1242,14 @@ function drawWeighStation(){
     rr(x,y,cw,86, on?"#13261f":"#1a1e28"); ro(x,y,cw,86, on?C.wasabi[500]:"#333a46",2);
     if(o.shape==="tupper") drawBowl(x+28,y+10,cw-56,48,item.color,o.tare,false);
     else if(o.shape==="vat") drawVat(x+28,y+16,cw-56,40,o.fill,0,item.color);
+    else if(o.shape==="veg") drawVegHeap(x+14,y+8,cw-28,50,item.color,item.shape,lot.pieces);
     else drawPot(x+34,y+8,cw-68,52,o.fill,0,item.color);
     txt(item.name,x+cw/2,y+60,{size:14,color:C.sumi[300],align:"center"});
     if(on){ rr(x+8,y+6,52,16,"#13261f"); ro(x+8,y+6,52,16,C.wasabi[500],2);
       txt("のせた",x+34,y+8,{size:11,color:C.wasabi[300],bold:true,align:"center"}); }
     if(i===G.ws.cursor){
       ro(x-6,y-6,cw+12,98,C.mikan[300],3);
-      drawActionButton(x+cw/2, y+104, on?"はかりから おろす":"はかりに のせる");
+      drawActionButton(x+cw/2, y+104, on?"はかりから おろす":"はかりに のせる", "C");
     }
   });
 
@@ -1182,6 +1266,7 @@ function drawWeighStation(){
     const o2=conOf(c);
     if(o2.shape==="tupper") drawBowl(ox+i*(bw2+gap),plateY-bh2,bw2,bh2,item.color,o2.tare,false);
     else if(o2.shape==="vat") drawVat(ox+i*(bw2+gap),plateY-bh2+12,bw2,bh2-12,o2.fill,0,item.color);
+    else if(o2.shape==="veg") drawVegHeap(ox+i*(bw2+gap),plateY-bh2,bw2,bh2,item.color,item.shape,lot.pieces);
     else drawPot(ox+i*(bw2+gap)+8,plateY-bh2,bw2-16,bh2,o2.fill,0,item.color);
   });
   const w=620,h=96,x=(W-w)/2,y=plateY;
@@ -1190,10 +1275,10 @@ function drawWeighStation(){
   rr(x+20,y+28,96,26,"#8e949e");
   txt("はかり",x+68,y+32,{size:15,color:"#2c3038",align:"center"});
   rr(x+w-300,y+18,278,56,"#0d1a14"); ro(x+w-300,y+18,278,56,"#27382f",2);
-  txt("容器こみの 重さ",x+w-288,y+22,{size:12,color:"#4e8a6c"});
+  txt(tare?"容器こみの 重さ":"のせたものの 重さ",x+w-288,y+22,{size:12,color:"#4e8a6c"});
   txt(on.length?comma(gross)+" g":"- - - - g",x+w-36,y+36,
       {size:28,color:"#6cf0a8",bold:true,align:"right"});
-  if(on.length) txt("空の容器の ごうけい  "+comma(tare)+"g",x+w-38,y+72,
+  if(on.length && tare) txt("空の容器の ごうけい  "+comma(tare)+"g",x+w-38,y+72,
       {size:15,color:"#2c3038",bold:true,align:"right"});
 
   drawKeyHints([["←→","えらぶ"],["X","もどる"]],H-34);
@@ -1241,7 +1326,6 @@ function drawPC(){
     txt(r.name,mx+62,ry+(r.delivery?6:14),{size:17,color:C.sumi[900],bold:true});
     if(r.delivery) txt("本日"+r.delivery+r.unit+" 納品予定",mx+62,ry+28,
         {size:13,color:C.wasabi[600]});
-    txt("理由: "+r.reason,mx+320,ry+16,{size:13,color:C.sumi[500]});
 
     const stx=mx+mw-300,stw=160;
     rr(stx,ry+10,stw,30,C.white);
